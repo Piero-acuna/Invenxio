@@ -12,7 +12,7 @@ import {
   Edit3, BarChart2, Users, TrendingUp, Box, Minus, Trash2,
   Phone, Mail, MapPin, RefreshCw, FileText, Zap, Clock,
   Receipt, BookOpen, Send, Tag, Calendar, LogOut,
-  Loader2, ScanBarcode, CameraOff, Save, FileSpreadsheet, FileDown,
+  Loader2, ScanBarcode, CameraOff, Save, FileSpreadsheet, FileDown, Download,
 } from "lucide-react";
 import { useAuth } from "./contexts/AuthContext";
 import { exportToExcel } from "./utils/exportExcel";
@@ -58,41 +58,70 @@ function generateBarcode() {
   return `${prefix}${random}`;
 }
 
-function BarcodeDisplay({ value, width = 280, height = 80 }) {
+function BarcodeDisplay({ value, height = 80, showDownload = false, productName = "" }) {
   const svgRef = useRef(null);
 
   useEffect(() => {
     if (!value || !svgRef.current) return;
-
-    // Pequeño delay para asegurar que el SVG está montado en el DOM
     const timer = setTimeout(() => {
       try {
         JsBarcode(svgRef.current, String(value), {
-          format: "CODE128",
-          width: 2,
-          height: height,
+          format:       "CODE128",
+          width:        2,
+          height:       height,
           displayValue: true,
-          fontSize: 12,
-          fontOptions: "bold",
-          margin: 10,
-          background: "#ffffff",
-          lineColor: "#111827",
-          textMargin: 4,
-          font: "monospace",
+          fontSize:     12,
+          fontOptions:  "bold",
+          margin:       10,
+          background:   "#ffffff",
+          lineColor:    "#111827",
+          textMargin:   4,
+          font:         "monospace",
         });
       } catch (err) {
         console.warn("Barcode error:", value, err);
       }
     }, 50);
-
     return () => clearTimeout(timer);
   }, [value, height]);
+
+  // Convierte el SVG a PNG y lo descarga
+  function handleDownload() {
+    if (!svgRef.current) return;
+    const svg     = svgRef.current;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas  = document.createElement("canvas");
+    const ctx     = canvas.getContext("2d");
+    const img     = new Image();
+    // Leer dimensiones reales del SVG generado por JsBarcode
+    const bbox    = svg.getBoundingClientRect();
+    canvas.width  = svg.width?.baseVal?.value  || bbox.width  || 300;
+    canvas.height = svg.height?.baseVal?.value || bbox.height || 120;
+    img.onload = () => {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      const link    = document.createElement("a");
+      link.download = `barcode_${productName || value}.png`;
+      link.href     = canvas.toDataURL("image/png");
+      link.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+  }
 
   if (!value) return null;
 
   return (
-    <div className="flex flex-col items-center bg-white rounded-lg p-3">
-      <svg ref={svgRef} style={{ width: "100%", maxWidth: width }} />
+    <div className="flex flex-col items-center bg-white rounded-lg p-3 gap-2">
+      <svg ref={svgRef} style={{ width: "100%", maxWidth: 280 }} />
+      {showDownload && (
+        <button
+          onClick={handleDownload}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition-colors"
+        >
+          <Download size={12} /> Descargar PNG
+        </button>
+      )}
     </div>
   );
 }
@@ -516,7 +545,7 @@ const TransactionHistory = ({ transactions: rawTransactions, loading, canViewFin
 
       {/* ── KPI Cards ── */}
       {canViewFinance && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
           {[
             {
               label: "Total Ingresos",
@@ -524,7 +553,7 @@ const TransactionHistory = ({ transactions: rawTransactions, loading, canViewFin
               sub: `${transactions.filter(t=>t.type==="venta").length} ventas`,
               color: "text-emerald-400",
               bg: "bg-emerald-500/10 border-emerald-500/20",
-              icon: <ArrowDownCircle size={18} />,
+              icon: <ArrowDownCircle size={16} />,
             },
             {
               label: "Total Egresos",
@@ -532,7 +561,7 @@ const TransactionHistory = ({ transactions: rawTransactions, loading, canViewFin
               sub: `${transactions.filter(t=>t.type==="compra").length} compras`,
               color: "text-blue-400",
               bg: "bg-blue-500/10 border-blue-500/20",
-              icon: <ArrowUpCircle size={18} />,
+              icon: <ArrowUpCircle size={16} />,
             },
             {
               label: "Ganancia Bruta",
@@ -540,7 +569,7 @@ const TransactionHistory = ({ transactions: rawTransactions, loading, canViewFin
               sub: gananciaBruta >= 0 ? "Positivo ✓" : "Negativo ✗",
               color: gananciaBruta >= 0 ? "text-amber-400" : "text-red-400",
               bg: gananciaBruta >= 0 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20",
-              icon: <TrendingUp size={18} />,
+              icon: <TrendingUp size={16} />,
             },
             {
               label: "Margen Neto",
@@ -548,15 +577,15 @@ const TransactionHistory = ({ transactions: rawTransactions, loading, canViewFin
               sub: "sobre ventas",
               color: margenGlobal >= 20 ? "text-emerald-400" : margenGlobal >= 0 ? "text-amber-400" : "text-red-400",
               bg: margenGlobal >= 20 ? "bg-emerald-500/10 border-emerald-500/20" : "bg-amber-500/10 border-amber-500/20",
-              icon: <BarChart2 size={18} />,
+              icon: <BarChart2 size={16} />,
             },
           ].map((s, i) => (
-            <div key={i} className={`rounded-xl p-4 border ${s.bg} flex items-center gap-3`}>
+            <div key={i} className={`rounded-xl p-3 sm:p-4 border ${s.bg} flex items-center gap-2 sm:gap-3`}>
               <span className={`${s.color} flex-shrink-0`}>{s.icon}</span>
               <div className="min-w-0">
-                <p className="text-xs text-slate-500 mb-0.5">{s.label}</p>
-                <p className={`text-base font-bold font-mono ${s.color} truncate`}>{s.value}</p>
-                <p className="text-xs text-slate-600">{s.sub}</p>
+                <p className="text-xs text-slate-500 mb-0.5 truncate">{s.label}</p>
+                <p className={`text-sm sm:text-base font-bold font-mono ${s.color} truncate`}>{s.value}</p>
+                <p className="text-xs text-slate-600 truncate">{s.sub}</p>
               </div>
             </div>
           ))}
@@ -848,13 +877,13 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
   return (
     <div className="space-y-5">
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
         {stats.map((s, i) => (
-          <div key={i} className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 flex items-center gap-3">
-            <span className={`${s.color} bg-slate-700/50 p-2 rounded-lg`}>{s.icon}</span>
-            <div>
-              <div className="text-2xl font-bold text-white font-mono">{s.value}</div>
-              <div className="text-xs text-slate-400">{s.label}</div>
+          <div key={i} className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
+            <span className={`${s.color} bg-slate-700/50 p-1.5 sm:p-2 rounded-lg flex-shrink-0`}>{s.icon}</span>
+            <div className="min-w-0">
+              <div className="text-xl sm:text-2xl font-bold text-white font-mono">{s.value}</div>
+              <div className="text-xs text-slate-400 truncate">{s.label}</div>
             </div>
           </div>
         ))}
@@ -937,21 +966,21 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
       {/* ── Slide-over detalle ── */}
       {selectedProduct && (
         <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedProdId(null)} />
-          <div className="w-full max-w-md bg-slate-900 border-l border-slate-700 flex flex-col overflow-hidden shadow-2xl">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700">
-              <div>
+          <div className="hidden sm:block flex-1 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedProdId(null)} />
+          <div className="w-full sm:max-w-md bg-slate-900 border-l border-slate-700 flex flex-col overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-700">
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-mono text-amber-400">{selectedProduct.sku}</p>
-                <h3 className="text-lg font-bold text-white">{selectedProduct.name}</h3>
+                <h3 className="text-base sm:text-lg font-bold text-white truncate">{selectedProduct.name}</h3>
               </div>
-              <button onClick={() => setSelectedProdId(null)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"><X size={18} /></button>
+              <button onClick={() => setSelectedProdId(null)} className="ml-3 p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors flex-shrink-0"><X size={18} /></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 sm:space-y-5">
               {/* Barcode */}
               {selectedProduct.barcode && (
                 <div>
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><ScanBarcode size={11} className="text-amber-400" />Código de Barras</p>
-                  <BarcodeDisplay value={selectedProduct.barcode} />
+                  <BarcodeDisplay value={selectedProduct.barcode} showDownload productName={selectedProduct.name} />
                 </div>
               )}
               {/* Info grid */}
@@ -1284,10 +1313,10 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
   return (
     <div className="space-y-5">
       {/* Tabs internos */}
-      <div className="flex flex-wrap gap-1 bg-slate-800/60 p-1 rounded-xl border border-slate-700/50 w-fit">
+      <div className="flex flex-wrap gap-1 bg-slate-800/60 p-1 rounded-xl border border-slate-700/50 w-full sm:w-fit">
         {innerTabs.map(t => (
           <button key={t.id} onClick={() => setMvTab(t.id)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mvTab === t.id ? "bg-amber-500 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
+            className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${mvTab === t.id ? "bg-amber-500 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
             {t.label}
           </button>
         ))}
@@ -1295,7 +1324,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
 
       {/* ── PURCHASE ── */}
       {mvTab === "purchase" && (
-        <div className="grid md:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
           <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
             <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2"><Truck size={16} className="text-amber-400" />Nueva Orden de Compra</h3>
             <div className="space-y-4">
@@ -1705,7 +1734,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
 
       {supTab === "list" && (
         loadingSup ? <Spinner /> : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             {suppliers.map(s => (
               <div key={s.id} className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 flex flex-col gap-4 hover:border-amber-500/30 transition-colors group">
                 <div className="flex items-start justify-between">
@@ -1792,7 +1821,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
               </div>
             ))}
           </div>
-          <div className="grid md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
             {canManageSuppliers && (
             <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
               <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2"><Send size={16} className="text-amber-400" />Registrar Venta a Proveedor</h3>
@@ -2139,23 +2168,21 @@ export default function InventoryApp() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100" style={{ fontFamily: "'IBM Plex Sans','DM Sans',system-ui,sans-serif" }}>
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-sm sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 md:px-6">
-          <div className="flex items-center justify-between h-14">
-            <div className="flex items-center gap-3">
-              {/* Logo Invenxio */}
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center shadow-md shadow-amber-500/30">
-                  <Box size={16} className="text-slate-900" />
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6">
+          <div className="flex items-center justify-between h-13 sm:h-14 gap-2">
+            {/* LEFT: logo + insignia + panel */}
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 bg-amber-500 rounded-lg flex items-center justify-center shadow-md shadow-amber-500/30">
+                  <Box size={14} className="text-slate-900" />
                 </div>
-                <div>
-                  <span className="font-extrabold text-white text-base tracking-tight">Inven</span>
-                  <span className="font-extrabold text-amber-400 text-base tracking-tight">xio</span>
-                  <span className="text-xs text-slate-600 ml-1.5 font-mono">v1</span>
+                <div className="hidden xs:block sm:block">
+                  <span className="font-extrabold text-white text-sm sm:text-base tracking-tight">Inven</span>
+                  <span className="font-extrabold text-amber-400 text-sm sm:text-base tracking-tight">xio</span>
+                  <span className="text-xs text-slate-600 ml-1 font-mono">v1</span>
                 </div>
               </div>
-              {/* Insignia de rol (Dueño / Empleado) */}
               <RoleBadge role={userProfile?.role} />
-              {/* Botón Panel: Mis Datos + (si corresponde) gestión de equipo */}
               <RolePanel
                 userProfile={userProfile}
                 companyName={companyName}
@@ -2169,28 +2196,32 @@ export default function InventoryApp() {
                 onSaveBilling={handleSaveBilling}
               />
             </div>
-            <div className="flex items-center gap-3">
+
+            {/* RIGHT: alertas + usuario + cerrar sesión */}
+            <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
               {lowStock > 0 && (
-                <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-lg">
-                  <AlertTriangle size={12} />{lowStock} alertas
+                <div className="flex items-center gap-1 sm:gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 sm:px-3 py-1.5 rounded-lg">
+                  <AlertTriangle size={11} />
+                  <span className="hidden sm:inline">{lowStock} alertas</span>
+                  <span className="sm:hidden">{lowStock}</span>
                 </div>
               )}
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-xs font-bold text-slate-900">
+              <div className="flex items-center gap-1.5">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-xs font-bold text-slate-900 flex-shrink-0">
                   {userName[0]?.toUpperCase()}
                 </div>
-                <span className="text-xs text-slate-400 hidden sm:block">{userName}</span>
+                <span className="text-xs text-slate-400 hidden sm:block truncate max-w-24">{userName}</span>
               </div>
               <button onClick={logout} title="Cerrar sesión"
-                className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
-                <LogOut size={15} />
+                className="p-1.5 sm:p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors flex-shrink-0">
+                <LogOut size={14} />
               </button>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6">
         {visibleTabs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-slate-500 gap-2">
             <AlertTriangle size={28} className="text-amber-400" />
@@ -2199,15 +2230,15 @@ export default function InventoryApp() {
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-1 bg-slate-800/50 p-1.5 rounded-2xl border border-slate-700/50 mb-6 w-fit">
+            <div className="flex items-center gap-1 bg-slate-800/50 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl border border-slate-700/50 mb-5 sm:mb-6 w-full sm:w-fit overflow-x-auto">
               {visibleTabs.map(tab => {
-                const icon = tab.id === "inventory" ? <Package size={16} />
-                  : tab.id === "movements" ? <BarChart2 size={16} />
-                  : <Truck size={16} />;
+                const icon = tab.id === "inventory" ? <Package size={14} />
+                  : tab.id === "movements" ? <BarChart2 size={14} />
+                  : <Truck size={14} />;
                 return (
                   <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeTab === tab.id ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/25" : "text-slate-400 hover:text-slate-200"}`}>
-                    {icon}{tab.label}
+                    className={`flex items-center gap-1.5 px-3 sm:px-5 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap flex-1 sm:flex-none justify-center ${activeTab === tab.id ? "bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/25" : "text-slate-400 hover:text-slate-200"}`}>
+                    {icon}<span>{tab.label}</span>
                   </button>
                 );
               })}

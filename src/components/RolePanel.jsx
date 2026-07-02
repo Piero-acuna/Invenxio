@@ -117,7 +117,7 @@ export default function RolePanel({
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-[26rem] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+        <div className="absolute left-0 sm:left-auto right-0 mt-2 w-[calc(100vw-1.5rem)] sm:w-[26rem] max-w-[26rem] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
           <div className="flex border-b border-slate-800">
             <button onClick={() => setTab("perfil")}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "perfil" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
