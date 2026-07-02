@@ -2,3 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes package-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(-18px, -8px, 0) rotate(-5deg) scale(0.9);
+  }
+  55% {
+    opacity: 1;
+    transform: translate3d(3px, 0, 0) rotate(2deg) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(0) scale(1);
+  }
+}
+
+.package-flow {
+  position: relative;
+  isolation: isolate;
+}
+
+.package-item {
+  animation: package-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: center bottom;
+}
+
+.package-item:nth-child(2) {
+  animation-delay: 80ms;
+}
+
+.package-item:nth-child(3) {
+  animation-delay: 160ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .package-item {
+    animation: none;
+  }
+}
+

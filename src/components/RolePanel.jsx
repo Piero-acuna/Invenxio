@@ -11,8 +11,39 @@ import {
   LayoutPanelLeft, X, UserPlus, Users, Mail, Lock, User as UserIcon,
   Crown, Shield, RefreshCw, AlertCircle, CheckCircle,
   Power, PowerOff, ChevronDown, Settings2, Save, Receipt, Building2,
+  Package, BarChart2, Warehouse, Truck, Sliders, Zap,
 } from "lucide-react";
 import { PERMISSION_GROUPS, defaultPermissions, getEffectivePermissions } from "../config/permissions";
+
+// Iconos por grupo de permisos (solo visual, permissions.js se queda sin JSX)
+const GROUP_ICONS = {
+  inventario:   <Package size={12} />,
+  movimientos:  <BarChart2 size={12} />,
+  almacen:      <Warehouse size={12} />,
+  proveedores:  <Truck size={12} />,
+  sistema:      <Sliders size={12} />,
+};
+
+// Plantillas rápidas de acceso — para no tener que marcar cada casilla a mano
+// cada vez que se registra un empleado con un rol típico.
+const ACCESS_PRESETS = [
+  { id: "vendedor",   label: "🛒 Vendedor",    keys: ["ver_inventario", "registrar_ventas"] },
+  { id: "almacenero", label: "🏬 Almacenero",  keys: ["ver_inventario", "ver_almacen", "gestionar_almacen"] },
+  { id: "proveedores",label: "🚚 Proveedores", keys: ["ver_inventario", "ver_proveedores", "gestionar_proveedores"] },
+  { id: "completo",   label: "👑 Acceso total",keys: null }, // null = todos los permisos
+  { id: "basico",     label: "↺ Básico",       keys: [] },   // vacío = solo los default
+];
+function applyPreset(preset) {
+  if (preset.keys === null) {
+    const all = {};
+    PERMISSION_GROUPS.forEach(g => g.permissions.forEach(p => { all[p.key] = true; }));
+    return all;
+  }
+  if (preset.keys.length === 0) return defaultPermissions();
+  const obj = {};
+  PERMISSION_GROUPS.forEach(g => g.permissions.forEach(p => { obj[p.key] = preset.keys.includes(p.key); }));
+  return obj;
+}
 
 // ── Insignia de rol reutilizable (solo distingue Dueño / Empleado) ───────────
 export const RoleBadge = ({ role }) => {
@@ -29,16 +60,46 @@ export const RoleBadge = ({ role }) => {
 };
 
 // ── Editor de "Permisos de Acceso" reutilizable (alta y edición) ─────────────
-function PermissionsEditor({ value, onChange, disabled }) {
+function PermissionsEditor({ value, onChange, disabled, showPresets }) {
   const toggle = (key) => {
     if (disabled) return;
     onChange({ ...value, [key]: !value[key] });
   };
+  const toggleGroup = (group, allOn) => {
+    if (disabled) return;
+    const next = { ...value };
+    group.permissions.forEach(p => { next[p.key] = allOn; });
+    onChange(next);
+  };
   return (
     <div className="space-y-3">
-      {PERMISSION_GROUPS.map(group => (
+      {showPresets && (
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Zap size={10} />Plantillas rápidas</p>
+          <div className="flex flex-wrap gap-1.5">
+            {ACCESS_PRESETS.map(preset => (
+              <button key={preset.id} type="button" disabled={disabled}
+                onClick={() => onChange(applyPreset(preset))}
+                className="text-[11px] px-2.5 py-1 rounded-full border border-slate-700 bg-slate-800 text-slate-300 hover:border-amber-500/50 hover:text-amber-400 transition-colors disabled:opacity-50">
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {PERMISSION_GROUPS.map(group => {
+        const allOn = group.permissions.every(p => !!value[p.key]);
+        return (
         <div key={group.id}>
-          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">{group.label}</p>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="text-amber-400/70">{GROUP_ICONS[group.id]}</span>{group.label}
+            </p>
+            <button type="button" disabled={disabled} onClick={() => toggleGroup(group, !allOn)}
+              className="text-[10px] text-slate-500 hover:text-amber-400 transition-colors disabled:opacity-50">
+              {allOn ? "Quitar todo" : "Activar todo"}
+            </button>
+          </div>
           <div className="space-y-1.5">
             {group.permissions.map(perm => {
               const checked = !!value[perm.key];
@@ -74,7 +135,8 @@ function PermissionsEditor({ value, onChange, disabled }) {
             })}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -117,7 +179,7 @@ export default function RolePanel({
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-[26rem] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+        <div className="absolute left-0 sm:left-auto right-0 mt-2 w-[calc(100vw-1.5rem)] sm:w-[26rem] max-w-[26rem] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
           <div className="flex border-b border-slate-800">
             <button onClick={() => setTab("perfil")}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "perfil" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
@@ -138,7 +200,7 @@ export default function RolePanel({
             <button onClick={() => setOpen(false)} className="px-3 text-slate-500 hover:text-slate-300"><X size={14} /></button>
           </div>
 
-          <div className="p-4 max-h-[32rem] overflow-y-auto">
+          <div className="p-4 max-h-[min(32rem,70vh)] overflow-y-auto">
             {tab === "perfil" && <PerfilTab userProfile={userProfile} companyName={companyName} />}
             {tab === "equipo" && canManage && (
               <EquipoTab
@@ -418,7 +480,7 @@ function EmployeeRow({ emp, isSelf, onChangePermissions, onToggleActive }) {
 
       {!isOwner && editing && (
         <div className="p-3 pt-1 border-t border-slate-700/60 bg-slate-900/40">
-          <PermissionsEditor value={draft} onChange={setDraft} />
+          <PermissionsEditor value={draft} onChange={setDraft} showPresets />
           <button
             onClick={handleSave}
             disabled={saving}
@@ -481,7 +543,7 @@ function EmployeeForm({ onSubmit, onCancel }) {
 
       <div>
         <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Permisos de Acceso</p>
-        <PermissionsEditor value={permissions} onChange={setPermissions} />
+        <PermissionsEditor value={permissions} onChange={setPermissions} showPresets />
       </div>
 
       <div className="flex gap-2 pt-1">
