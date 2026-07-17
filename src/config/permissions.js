@@ -68,6 +68,7 @@ export function hasPermission(profile, key) {
 }
 
 export const TAB_DEFS = {
+  dashboard: { id: "dashboard", label: "Inicio"       },
   inventory: { id: "inventory", label: "Inventario"  },
   movements: { id: "movements", label: "Movimientos" },
   warehouse: { id: "warehouse", label: "Almacén"     },
@@ -81,5 +82,13 @@ export function canSeeTab(profile, tabId) {
   if (tabId === "movements") return hasPermission(profile, "registrar_ventas") || hasPermission(profile, "registrar_compras");
   if (tabId === "warehouse") return hasPermission(profile, "ver_almacen") || hasPermission(profile, "gestionar_almacen");
   if (tabId === "suppliers") return hasPermission(profile, "ver_proveedores") || hasPermission(profile, "gestionar_proveedores");
+  // El Dashboard es un resumen de los demás módulos: solo tiene sentido
+  // mostrarlo si el empleado puede ver al menos uno de ellos. Así, alguien
+  // sin NINGÚN permiso asignado sigue viendo el mensaje "no tienes permisos
+  // todavía" (ver InventorySystem.jsx) en vez de un Dashboard vacío.
+  if (tabId === "dashboard") {
+    return canSeeTab(profile, "inventory") || canSeeTab(profile, "movements")
+        || canSeeTab(profile, "warehouse") || canSeeTab(profile, "suppliers");
+  }
   return false;
 }
