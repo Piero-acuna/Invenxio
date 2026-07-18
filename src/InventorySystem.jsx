@@ -11,7 +11,7 @@
 // hasta la refactorización; dividirlo hizo mucho más fácil navegar el
 // proyecto y reduce el riesgo de conflictos de merge entre módulos.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import {
   AlertTriangle, Box, LogOut, Loader2, Warehouse,
   Package, BarChart2, Truck, LayoutDashboard,
@@ -23,13 +23,19 @@ import {
 } from "./services/firestoreService";
 import RolePanel, { RoleBadge } from "./components/RolePanel";
 import { hasPermission, canSeeTab, TAB_DEFS } from "./config/permissions";
-import WarehouseModule from "./WarehouseModule";
 import { useCollection } from "./hooks/useCollection";
 
-import DashboardModule  from "./modules/DashboardModule";
-import InventoryModule  from "./modules/InventoryModule";
-import MovementsModule  from "./modules/MovementsModule";
-import SuppliersModule  from "./modules/SuppliersModule";
+// Cada módulo (y sus dependencias pesadas como jsPDF/html2canvas, que solo
+// usan Movimientos y Proveedores para las facturas) se carga bajo demanda,
+// solo cuando el usuario abre esa pestaña — en vez de venir todos juntos en
+// el bundle inicial. Esto es lo que reduce el aviso de Vite de "bloque de
+// más de 500 kB": antes TODO el código de los 5 módulos se descargaba antes
+// de poder ver siquiera el login.
+const DashboardModule = lazy(() => import("./modules/DashboardModule"));
+const InventoryModule  = lazy(() => import("./modules/InventoryModule"));
+const MovementsModule  = lazy(() => import("./modules/MovementsModule"));
+const SuppliersModule  = lazy(() => import("./modules/SuppliersModule"));
+const WarehouseModule  = lazy(() => import("./WarehouseModule"));
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ROOT — Invenxio
@@ -40,6 +46,15 @@ import SuppliersModule  from "./modules/SuppliersModule";
 function WarehouseModuleWrapper({ companyId, userName, canManage }) {
   const [storeProducts] = useCollection(companyId, "products", "name");
   return <WarehouseModule companyId={companyId} userName={userName} storeProducts={storeProducts} canManage={canManage} />;
+}
+
+// Loader liviano mientras se descarga el chunk del módulo elegido.
+function ModuleLoader() {
+  return (
+    <div className="flex items-center justify-center py-24">
+      <Loader2 size={24} className="animate-spin text-amber-400" />
+    </div>
+  );
 }
 
 export default function InventoryApp() {
@@ -200,7 +215,7 @@ export default function InventoryApp() {
             {!companyId ? (
               <div className="flex items-center justify-center py-20"><Loader2 size={28} className="animate-spin text-amber-400" /></div>
             ) : (
-              <>
+              <Suspense fallback={<ModuleLoader />}>
                 {activeTab === "dashboard" && (
                   <DashboardModule companyId={companyId} userName={userName} companyName={companyName}
                     perms={perms} onNavigate={setActiveTab} />
@@ -224,7 +239,7 @@ export default function InventoryApp() {
                     canManageSuppliers={perms.gestionarProveedores} canDelete={perms.eliminarRegistros}
                     canViewFinance={perms.verMetricas} billing={billing} />
                 )}
-              </>
+              </Suspense>
             )}
           </>
         )}
