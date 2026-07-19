@@ -495,7 +495,15 @@ export async function recordSale(companyId, { cartItems, userName, clientName = 
         type: "venta", date: today,
         product: item.name, sku: item.sku,
         qty: item.qty,                  // unidades base descontadas del stock
-        unitPrice: item.price, total: item.price * item.qty,
+        // Precio: SIEMPRE el que se acaba de leer del documento real del
+        // producto (p.price) dentro de esta transacción, NUNCA item.price
+        // (el valor que llega del carrito en el navegador). item.qty sí se
+        // confía porque ya se validó arriba contra el stock real — pero el
+        // precio es dinero, y cualquiera con la consola del navegador podría
+        // llamar a esta función con un item.price manipulado si lo
+        // usáramos directo. Así, el monto de la venta queda anclado a lo
+        // que de verdad dice el catálogo, pase lo que pase en el cliente.
+        unitPrice: p.price, total: p.price * item.qty,
         client: clientName || "Cliente",
         note: "",
         createdBy: userName,
