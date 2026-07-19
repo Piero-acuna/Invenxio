@@ -14,7 +14,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard, Package, Warehouse, Truck, BarChart2, AlertTriangle,
   CheckCircle2, TrendingUp, TrendingDown, Clock, ArrowRight, Wallet,
-  Boxes, Users, ShoppingCart, PackageX, Loader2,
+  Boxes, Users, ShoppingCart, PackageX, Loader2, Trophy, ArrowDownCircle,
 } from "lucide-react";
 import { useCollection } from "../hooks/useCollection";
 import {
@@ -78,6 +78,28 @@ export default function DashboardModule({ companyId, userName, companyName, perm
     });
     return { total: warehouseProducts.length, locations: locations.length, outCount, totalPacks, value };
   }, [warehouseProducts, stockByProduct, locations]);
+
+  // ── Ranking de productos más y menos vendidos (histórico, todas las ventas) ─
+  // Se agrupa por SKU (no por nombre) por si dos productos comparten nombre.
+  // El ranking de "menos vendidos" solo toma productos que SÍ tuvieron
+  // alguna venta, y nunca repite un producto que ya salió en "más vendidos"
+  // (importante en catálogos chicos, donde ambos rankings podrían pisarse).
+  const topProducts = useMemo(() => {
+    const bySku = {};
+    transactions.forEach(t => {
+      if (t.type !== "venta") return;
+      const key = t.sku || t.product;
+      if (!bySku[key]) bySku[key] = { name: t.product, qty: 0 };
+      bySku[key].qty += t.qty || 0;
+    });
+    const ranked = Object.values(bySku).sort((a, b) => b.qty - a.qty);
+    const n = ranked.length;
+    const mostList = ranked.slice(0, Math.min(7, n));
+    const leastCount = Math.min(7, Math.max(0, n - mostList.length));
+    // .reverse() para que el #1 de "menos vendidos" sea el que tiene menos unidades.
+    const leastList = leastCount > 0 ? ranked.slice(n - leastCount).reverse() : [];
+    return { mostList, leastList };
+  }, [transactions]);
 
   // ── Movimientos (ventas / compras de hoy) ───────────────────────────────────
   const mv = useMemo(() => {
@@ -229,6 +251,22 @@ export default function DashboardModule({ companyId, userName, companyName, perm
         )}
       </div>
 
+      {/* ── Ranking de productos más y menos vendidos ── */}
+      {perms.registrarVentas && topProducts.mostList.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+          <RankList
+            title="Más vendidos" icon={<Trophy size={14} />} tone="emerald"
+            items={topProducts.mostList} maxQty={topProducts.mostList[0]?.qty || 1}
+          />
+          {topProducts.leastList.length > 0 && (
+            <RankList
+              title="Menos vendidos" icon={<ArrowDownCircle size={14} />} tone="slate"
+              items={topProducts.leastList} maxQty={topProducts.mostList[0]?.qty || 1}
+            />
+          )}
+        </div>
+      )}
+
       {/* ── Últimos movimientos ── */}
       {(perms.registrarVentas || perms.registrarCompras) && mv.recent.length > 0 && (
         <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 sm:p-5">
@@ -304,6 +342,42 @@ function MiniStat({ label, value, color, small }) {
     <div className="text-center">
       <div className={`font-bold font-mono ${small ? "text-xs" : "text-base"} ${color || "text-slate-200"}`}>{value}</div>
       <div className="text-[10px] text-slate-500 truncate">{label}</div>
+    </div>
+  );
+}
+
+const RANK_TONE = {
+  emerald: { icon: "text-emerald-400", bar: "bg-emerald-500", badge: "bg-emerald-500/15 text-emerald-400" },
+  slate:   { icon: "text-slate-400",   bar: "bg-slate-500",   badge: "bg-slate-700 text-slate-300" },
+};
+
+// Lista tipo "leaderboard": hasta 7 productos con una barra proporcional a
+// sus unidades vendidas, todas escaladas contra la MISMA referencia
+// (maxQty = el producto #1 de "más vendidos"), para que al comparar ambas
+// listas lado a lado se note visualmente qué tan chica es la diferencia.
+function RankList({ title, icon, tone, items, maxQty }) {
+  const t = RANK_TONE[tone];
+  return (
+    <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 sm:p-5">
+      <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+        <span className={t.icon}>{icon}</span>{title}
+      </h3>
+      <div className="space-y-2.5">
+        {items.map((p, i) => (
+          <div key={p.name + i} className="flex items-center gap-2.5">
+            <span className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${t.badge}`}>{i + 1}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-xs text-slate-300 truncate">{p.name}</span>
+                <span className="text-xs font-mono font-semibold text-slate-200 flex-shrink-0">{p.qty}</span>
+              </div>
+              <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                <div className={`h-full rounded-full ${t.bar}`} style={{ width: `${Math.max(4, (p.qty / maxQty) * 100)}%` }} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
