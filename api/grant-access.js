@@ -31,16 +31,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import admin from "firebase-admin";
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
-    }),
-  });
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ ok: false, error: "Método no permitido" });
@@ -57,6 +47,30 @@ export default async function handler(req, res) {
   }
 
   try {
+    // La inicialización vive ACÁ ADENTRO (y no arriba, a nivel de módulo)
+    // a propósito: si falta o está mal alguna variable de entorno de
+    // Firebase, admin.credential.cert() truena — y si eso pasa fuera de
+    // este try/catch, Vercel lo muestra como un FUNCTION_INVOCATION_FAILED
+    // genérico, sin decirte el motivo real. Aquí adentro, en cambio, el
+    // catch de más abajo atrapa el error y te lo devuelve legible.
+    if (!admin.apps.length) {
+      const missing = ["FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY"]
+        .filter((k) => !process.env[k]);
+      if (missing.length) {
+        return res.status(500).json({
+          ok: false,
+          error: `Faltan variables de entorno en Vercel: ${missing.join(", ")}`,
+        });
+      }
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+        }),
+      });
+    }
+
     const { companyId, dias } = req.body || {};
 
     if (!companyId || !Number.isFinite(dias) || dias <= 0) {
@@ -85,6 +99,9 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, paidUntil: paidUntil.toISOString() });
   } catch (err) {
     console.error("grant-access error:", err);
-    return res.status(500).json({ ok: false, error: "Error interno al otorgar el acceso." });
+    // Este endpoint solo lo usas tú (protegido por ADMIN_SECRET), así que sí
+    // es seguro devolver err.message aquí — a diferencia de culqi-charge.js,
+    // que da un mensaje genérico porque lo llama cualquier cliente final.
+    return res.status(500).json({ ok: false, error: err.message || "Error interno al otorgar el acceso." });
   }
 }
