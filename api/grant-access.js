@@ -62,19 +62,26 @@ export default async function handler(req, res) {
           error: `Faltan variables de entorno en Vercel: ${missing.join(", ")}`,
         });
       }
-      const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n");
+      let privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n").trim();
+
+      // Por si se pegó el valor incluyendo las comillas dobles del JSON
+      // original (esas comillas son sintaxis de JSON, no parte de la llave
+      // real) — las quitamos si están, en vez de fallar silenciosamente.
+      if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+        privateKey = privateKey.slice(1, -1);
+      }
 
       // Chequeo de formato: si FIREBASE_PRIVATE_KEY se pegó mal en Vercel
       // (sin las cabeceras PEM, con \n a medio convertir, etc.), es mejor
       // avisar esto claramente en vez de dejar que google-auth-library
       // truene más adelante con un "Cannot read properties of undefined
       // (reading 'length')" que no dice nada útil.
-      if (!privateKey.includes("BEGIN PRIVATE KEY")) {
+      if (!privateKey.includes("-----BEGIN PRIVATE KEY-----") || !privateKey.includes("-----END PRIVATE KEY-----")) {
         return res.status(500).json({
           ok: false,
           error:
-            "FIREBASE_PRIVATE_KEY no tiene el formato PEM esperado (falta '-----BEGIN PRIVATE KEY-----'). " +
-            "Vuelve a copiar el valor completo del JSON de la cuenta de servicio, con comillas incluidas.",
+            "FIREBASE_PRIVATE_KEY no tiene el formato PEM esperado (faltan las cabeceras BEGIN/END PRIVATE KEY). " +
+            "Copia SOLO el contenido entre comillas del campo private_key del JSON, sin las comillas mismas.",
         });
       }
 
