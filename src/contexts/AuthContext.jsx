@@ -31,6 +31,7 @@ import {
   getUserProfile,
   createUserProfile,
   getCompanyProfile,
+  updateUserPermissions,
 } from "../services/firestoreService";
 import { defaultPermissions } from "../config/permissions";
 
@@ -204,7 +205,17 @@ export function AuthProvider({ children }) {
       await setPersistence(secondaryAuth, inMemoryPersistence);
       const { user } = await createUserWithEmailAndPassword(secondaryAuth, email, password);
       await updateProfile(user, { displayName: name });
-      await createUserProfile({ uid: user.uid, name, email, companyId, role: "empleado", permissions });
+      // El alta SIEMPRE se crea con los permisos por defecto: firestore.rules
+      // exige esto en la creación de users/{uid} para que nadie que conozca
+      // el companyId pueda autoasignarse permisos altos al registrarse (esa
+      // escritura ocurre autenticada como el propio empleado nuevo, no como
+      // el Dueño — ver el comentario en la regla "create" de users/{uid}).
+      await createUserProfile({ uid: user.uid, name, email, companyId, role: "empleado", permissions: defaultPermissions() });
+      // Los permisos reales elegidos en el formulario se aplican acá, en un
+      // segundo paso — este updateDoc SÍ corre autenticado como el Dueño (la
+      // sesión principal, `auth`, nunca se tocó), que es el único que las
+      // reglas dejan elevar los permisos de un empleado.
+      await updateUserPermissions(user.uid, permissions);
       return user.uid;
     } catch (err) {
       setAuthError(friendlyError(err.code));
