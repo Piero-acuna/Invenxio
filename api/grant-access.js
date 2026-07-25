@@ -1,131 +1,201 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // api/grant-access.js
-// Endpoint de Vercel para dar acceso de cortesía (sin cobrar) a una empresa,
-// protegido con una clave secreta tuya — no la de Firebase Auth del usuario,
-// porque esto es una herramienta TUYA de administrador, no algo que el
-// Dueño de una empresa deba poder llamar por sí mismo.
-//
-// Copia este archivo a la carpeta /api de tu proyecto (junto a
-// culqi-charge.js) → Vercel lo publica solo como POST /api/grant-access.
-//
-// VARIABLE DE ENTORNO NUEVA QUE NECESITAS (Vercel → Settings → Environment
-// Variables, igual que las de Firebase/Culqi):
-//   ADMIN_SECRET  → invéntate una clave larga y random, ej. genera una con
-//                   `openssl rand -hex 32` en tu terminal. NUNCA la pongas
-//                   en el código ni la compartas — es lo único que protege
-//                   este endpoint.
-//
-// Reutiliza las mismas 3 variables de Firebase Admin que ya tienes para
-// culqi-charge.js: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
-// FIREBASE_PRIVATE_KEY.
-//
-// CÓMO LLAMARLO (desde tu terminal, nunca desde el navegador del cliente ni
-// desde ningún botón de la app — este endpoint no debe tener UI):
-//
-//   curl -X POST https://tu-dominio.vercel.app/api/grant-access \
-//     -H "Authorization: Bearer TU_ADMIN_SECRET" \
-//     -H "Content-Type: application/json" \
-//     -d '{"companyId": "abc123", "dias": 30}'
-//
-// Respuesta: { ok: true, paidUntil: "2026-08-25T..." }
+// Endpoint administrativo para conceder días de cortesía a una empresa.
 // ─────────────────────────────────────────────────────────────────────────────
-import admin from "firebase-admin";
+
+import {
+  cert,
+  getApps,
+  initializeApp,
+} from "firebase-admin/app";
+
+import {
+  FieldValue,
+  getFirestore,
+} from "firebase-admin/firestore";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ ok: false, error: "Método no permitido" });
+    return res.status(405).json({
+      ok: false,
+      error: "Método no permitido.",
+    });
   }
 
-  // 1. Verificar la clave secreta ANTES de tocar cualquier otra cosa. Si
-  //    ADMIN_SECRET no está configurada en Vercel, bloqueamos por defecto
-  //    en vez de dejar el endpoint abierto por accidente.
+  // 1. Validar secreto administrativo
   const authHeader = req.headers.authorization || "";
-  const providedSecret = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-  if (!process.env.ADMIN_SECRET || providedSecret !== process.env.ADMIN_SECRET) {
-    return res.status(401).json({ ok: false, error: "No autorizado." });
+  const providedSecret = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7).trim()
+    : "";
+
+  if (!process.env.ADMIN_SECRET) {
+    console.error("ADMIN_SECRET no está configurada.");
+
+    return res.status(500).json({
+      ok: false,
+      error: "ADMIN_SECRET no está configurada en Vercel.",
+    });
+  }
+
+  if (providedSecret !== process.env.ADMIN_SECRET) {
+    return res.status(401).json({
+      ok: false,
+      error: "No autorizado.",
+    });
   }
 
   try {
-    // La inicialización vive ACÁ ADENTRO (y no arriba, a nivel de módulo)
-    // a propósito: si falta o está mal alguna variable de entorno de
-    // Firebase, admin.credential.cert() truena — y si eso pasa fuera de
-    // este try/catch, Vercel lo muestra como un FUNCTION_INVOCATION_FAILED
-    // genérico, sin decirte el motivo real. Aquí adentro, en cambio, el
-    // catch de más abajo atrapa el error y te lo devuelve legible.
-    if (!admin.apps.length) {
-      const missing = ["FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY"]
-        .filter((k) => !process.env[k]);
-      if (missing.length) {
-        return res.status(500).json({
-          ok: false,
-          error: `Faltan variables de entorno en Vercel: ${missing.join(", ")}`,
-        });
-      }
-      let privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n").trim();
+    // 2. Verificar variables de Firebase
+    const requiredVariables = [
+      "FIREBASE_PROJECT_ID",
+      "FIREBASE_CLIENT_EMAIL",
+      "FIREBASE_PRIVATE_KEY",
+    ];
 
-      // Por si se pegó el valor con alguna comilla doble sobrante en los
-      // extremos (de las comillas de sintaxis del JSON original) — las
-      // quitamos una por una, sin importar si aparecen emparejadas o no,
-      // en vez de fallar silenciosamente con un PEM roto.
-      if (privateKey.startsWith('"')) privateKey = privateKey.slice(1);
-      if (privateKey.endsWith('"')) privateKey = privateKey.slice(0, -1);
-      privateKey = privateKey.trim();
+    const missingVariables = requiredVariables.filter(
+      (variable) => !process.env[variable]
+    );
 
-      // Chequeo de formato: si FIREBASE_PRIVATE_KEY se pegó mal en Vercel
-      // (sin las cabeceras PEM, con \n a medio convertir, etc.), es mejor
-      // avisar esto claramente en vez de dejar que google-auth-library
-      // truene más adelante con un "Cannot read properties of undefined
-      // (reading 'length')" que no dice nada útil.
-      if (!privateKey.includes("-----BEGIN PRIVATE KEY-----") || !privateKey.includes("-----END PRIVATE KEY-----")) {
-        return res.status(500).json({
-          ok: false,
-          error:
-            "FIREBASE_PRIVATE_KEY no tiene el formato PEM esperado (faltan las cabeceras BEGIN/END PRIVATE KEY). " +
-            "Copia SOLO el contenido entre comillas del campo private_key del JSON, sin las comillas mismas.",
-        });
-      }
+    if (missingVariables.length > 0) {
+      return res.status(500).json({
+        ok: false,
+        error: `Faltan variables de entorno en Vercel: ${missingVariables.join(
+          ", "
+        )}`,
+      });
+    }
 
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    // 3. Preparar clave privada
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY.trim();
+
+    // Eliminar comillas que pudieron copiarse desde el JSON
+    if (
+      (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+      (privateKey.startsWith("'") && privateKey.endsWith("'"))
+    ) {
+      privateKey = privateKey.slice(1, -1);
+    }
+
+    // Convertir los caracteres literales \n en saltos de línea reales
+    privateKey = privateKey
+      .replace(/\\n/g, "\n")
+      .trim();
+
+    if (
+      !privateKey.includes("-----BEGIN PRIVATE KEY-----") ||
+      !privateKey.includes("-----END PRIVATE KEY-----")
+    ) {
+      return res.status(500).json({
+        ok: false,
+        error:
+          "FIREBASE_PRIVATE_KEY no tiene el formato PEM correcto. " +
+          "Debe contener BEGIN PRIVATE KEY y END PRIVATE KEY.",
+      });
+    }
+
+    // 4. Inicializar Firebase Admin una sola vez
+    if (getApps().length === 0) {
+      initializeApp({
+        credential: cert({
+          projectId: process.env.FIREBASE_PROJECT_ID.trim(),
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL.trim(),
           privateKey,
         }),
       });
     }
 
-    const { companyId, dias } = req.body || {};
+    // 5. Leer y validar body
+    let body = req.body;
 
-    if (!companyId || !Number.isFinite(dias) || dias <= 0) {
-      return res.status(400).json({ ok: false, error: "Faltan companyId o dias (numero positivo)." });
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        return res.status(400).json({
+          ok: false,
+          error: "El cuerpo enviado no contiene un JSON válido.",
+        });
+      }
     }
 
-    const subRef = admin.firestore().doc(`companies/${companyId}/meta/subscription`);
-    const snap = await subRef.get();
+    const companyId =
+      typeof body?.companyId === "string"
+        ? body.companyId.trim()
+        : "";
 
-    if (!snap.exists) {
-      return res.status(404).json({ ok: false, error: `No existe companies/${companyId}/meta/subscription.` });
+    const dias = Number(body?.dias);
+
+    if (!companyId) {
+      return res.status(400).json({
+        ok: false,
+        error: "companyId es obligatorio.",
+      });
     }
 
-    const paidUntil = new Date(Date.now() + dias * 24 * 60 * 60 * 1000);
+    if (companyId.includes("/")) {
+      return res.status(400).json({
+        ok: false,
+        error: "companyId contiene caracteres no permitidos.",
+      });
+    }
 
-    await subRef.set(
+    if (!Number.isInteger(dias) || dias <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "dias debe ser un número entero positivo.",
+      });
+    }
+
+    // 6. Buscar suscripción
+    const db = getFirestore();
+
+    const subscriptionPath =
+      `companies/${companyId}/meta/subscription`;
+
+    const subscriptionRef = db.doc(subscriptionPath);
+    const subscriptionSnapshot = await subscriptionRef.get();
+
+    if (!subscriptionSnapshot.exists) {
+      return res.status(404).json({
+        ok: false,
+        error: `No existe ${subscriptionPath}.`,
+      });
+    }
+
+    // 7. Calcular nueva fecha
+    const paidUntil = new Date(
+      Date.now() + dias * 24 * 60 * 60 * 1000
+    );
+
+    // 8. Actualizar Firestore
+    await subscriptionRef.set(
       {
         status: "active",
         plan: "cortesia",
         paidUntil: paidUntil.toISOString(),
-        grantedManuallyAt: admin.firestore.FieldValue.serverTimestamp(),
+        grantedManuallyAt: FieldValue.serverTimestamp(),
       },
-      { merge: true }
+      {
+        merge: true,
+      }
     );
 
-    return res.status(200).json({ ok: true, paidUntil: paidUntil.toISOString() });
-  } catch (err) {
-    console.error("grant-access error:", err);
-    // Este endpoint solo lo usas tú (protegido por ADMIN_SECRET), así que sí
-    // es seguro devolver err.message aquí — a diferencia de culqi-charge.js,
-    // que da un mensaje genérico porque lo llama cualquier cliente final.
-    return res.status(500).json({ ok: false, error: err.message || "Error interno al otorgar el acceso." });
+    return res.status(200).json({
+      ok: true,
+      companyId,
+      dias,
+      paidUntil: paidUntil.toISOString(),
+    });
+  } catch (error) {
+    console.error("grant-access error:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Error interno al otorgar el acceso.",
+    });
   }
 }
