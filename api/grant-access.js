@@ -64,12 +64,13 @@ export default async function handler(req, res) {
       }
       let privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n").trim();
 
-      // Por si se pegó el valor incluyendo las comillas dobles del JSON
-      // original (esas comillas son sintaxis de JSON, no parte de la llave
-      // real) — las quitamos si están, en vez de fallar silenciosamente.
-      if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-        privateKey = privateKey.slice(1, -1);
-      }
+      // Por si se pegó el valor con alguna comilla doble sobrante en los
+      // extremos (de las comillas de sintaxis del JSON original) — las
+      // quitamos una por una, sin importar si aparecen emparejadas o no,
+      // en vez de fallar silenciosamente con un PEM roto.
+      if (privateKey.startsWith('"')) privateKey = privateKey.slice(1);
+      if (privateKey.endsWith('"')) privateKey = privateKey.slice(0, -1);
+      privateKey = privateKey.trim();
 
       // Chequeo de formato: si FIREBASE_PRIVATE_KEY se pegó mal en Vercel
       // (sin las cabeceras PEM, con \n a medio convertir, etc.), es mejor
