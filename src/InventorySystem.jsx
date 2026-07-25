@@ -19,11 +19,13 @@ import {
 import { useAuth } from "./contexts/AuthContext";
 import {
   subscribeToEmployees, updateUserPermissions, setEmployeeActive,
-  subscribeToCompany, updateCompanyBilling,
+  subscribeToCompany, updateCompanyBilling, subscribeToSubscription,
 } from "./services/firestoreService";
 import RolePanel, { RoleBadge } from "./components/RolePanel";
 import { hasPermission, canSeeTab, TAB_DEFS } from "./config/permissions";
 import { useCollection } from "./hooks/useCollection";
+import PaywallScreen from "./components/PaywallScreen";
+import TrialBanner   from "./components/TrialBanner";
 
 // Cada módulo (y sus dependencias pesadas como jsPDF/html2canvas, que solo
 // usan Movimientos y Proveedores para las facturas) se carga bajo demanda,
@@ -128,6 +130,36 @@ export default function InventoryApp() {
     await updateCompanyBilling(companyId, data);
   }
 
+  // ── Estado de prueba gratis / pago ──────────────────────────────────────
+  // `subscription === undefined` = todavía cargando. `null` = no existe el
+  // documento (no debería pasar en una empresa creada normalmente, pero si
+  // pasa, se trata como bloqueado — mejor fallar cerrado que dejar pasar).
+  const [subscription, setSubscription] = useState(undefined);
+  useEffect(() => {
+    if (!companyId) return;
+    return subscribeToSubscription(companyId, setSubscription);
+  }, [companyId]);
+
+  const subLoading = !!companyId && subscription === undefined;
+  // El linter del proyecto marca Date.now() como "función impura" en el
+  // cuerpo del componente (react-hooks/purity) — new Date().getTime() es
+  // equivalente y es el patrón que ya usa el resto de la app (ver
+  // DashboardModule.jsx), así que seguimos esa misma convención acá.
+  const now = new Date().getTime();
+  const trialEndsAt = subscription?.trialEndsAt ? new Date(subscription.trialEndsAt).getTime() : null;
+  const paidUntil   = subscription?.paidUntil   ? new Date(subscription.paidUntil).getTime()   : null;
+
+  const isBlocked = !subLoading && (
+    !subscription ||
+    (subscription.status === "trial"  && (!trialEndsAt || trialEndsAt <= now)) ||
+    (subscription.status === "active" && (!paidUntil   || paidUntil   <= now)) ||
+    (subscription.status !== "trial" && subscription.status !== "active")
+  );
+  const blockReason = subscription?.status === "active" ? "expired" : "trial";
+  const trialDaysLeft = (subscription?.status === "trial" && trialEndsAt && trialEndsAt > now)
+    ? Math.ceil((trialEndsAt - now) / 86400000)
+    : null;
+
   const [products] = useCollection(companyId, "products", "name");
   const lowStock   = products.filter(p => p.status !== "En Stock").length;
 
@@ -187,8 +219,22 @@ export default function InventoryApp() {
         </div>
       </header>
 
+      {trialDaysLeft != null && !isBlocked && (
+        <TrialBanner daysLeft={trialDaysLeft} isOwner={userProfile?.role === "owner"} />
+      )}
+
       <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6">
-        {visibleTabs.length === 0 ? (
+        {subLoading ? (
+          <div className="flex items-center justify-center py-24"><Loader2 size={28} className="animate-spin text-amber-400" /></div>
+        ) : isBlocked ? (
+          <PaywallScreen
+            isOwner={userProfile?.role === "owner"}
+            companyId={companyId}
+            companyName={companyName}
+            getIdToken={() => currentUser.getIdToken()}
+            reason={blockReason}
+          />
+        ) : visibleTabs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-slate-500 gap-2">
             <AlertTriangle size={28} className="text-amber-400" />
             <p className="text-sm">Tu cuenta no tiene permisos asignados todavía.</p>

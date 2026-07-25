@@ -43,6 +43,10 @@ const productHistoryCol = (cid, productId) =>
  * Crea el documento de la empresa y el perfil del usuario fundador.
  * Se llama una única vez al registrar el primer usuario.
  */
+// Duración de la prueba gratis para toda empresa nueva. Un solo número acá
+// controla todo el sistema — cambialo si quieres 7, 14, 30 días, etc.
+export const TRIAL_DAYS = 14;
+
 export async function createCompany({ companyName, ownerUid, ownerName, ownerEmail }) {
   // 1. Crear documento de la empresa
   const cRef = companyRef(ownerUid); // usamos uid como companyId para simplicidad
@@ -60,6 +64,18 @@ export async function createCompany({ companyName, ownerUid, ownerName, ownerEma
     companyId: ownerUid,          // companyId = uid del fundador
     role:      "owner",
     active:    true,
+    createdAt: serverTimestamp(),
+  });
+
+  // 3. Estado inicial de suscripción: prueba gratis de TRIAL_DAYS días.
+  //    Después de esto, este documento SOLO lo puede volver a tocar el
+  //    backend de pagos (api/culqi-charge.js) — las reglas de Firestore
+  //    bloquean cualquier update desde el cliente, incluso del propio Dueño.
+  const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+  await setDoc(doc(db, "companies", ownerUid, "meta", "subscription"), {
+    status: "trial",
+    plan:   "trial",
+    trialEndsAt: trialEndsAt.toISOString(),
     createdAt: serverTimestamp(),
   });
 
@@ -114,6 +130,28 @@ export async function updateCompanyBilling(companyId, billing) {
     billing,
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Suscripción en tiempo real al estado de prueba gratis / pago de la
+ * empresa (companies/{id}/meta/subscription). Es de SOLO LECTURA desde el
+ * cliente — ver firestore.rules — así que este archivo no tiene ninguna
+ * función para escribirlo; eso solo lo hace api/culqi-charge.js con el
+ * Admin SDK, después de confirmar un cobro real con Culqi.
+ */
+export function subscribeToSubscription(companyId, onData) {
+  return onSnapshot(doc(db, "companies", companyId, "meta", "subscription"), (snap) => {
+    onData(snap.exists() ? snap.data() : null);
+  });
+}
+
+/**
+ * Obtiene el estado de suscripción una sola vez (no en tiempo real) — lo
+ * usa el botón de pago para mandarle a Culqi el plan/monto correcto.
+ */
+export async function getSubscription(companyId) {
+  const snap = await getDoc(doc(db, "companies", companyId, "meta", "subscription"));
+  return snap.exists() ? snap.data() : null;
 }
 
 /**
