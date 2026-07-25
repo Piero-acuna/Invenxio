@@ -62,11 +62,27 @@ export default async function handler(req, res) {
           error: `Faltan variables de entorno en Vercel: ${missing.join(", ")}`,
         });
       }
+      const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n");
+
+      // Chequeo de formato: si FIREBASE_PRIVATE_KEY se pegó mal en Vercel
+      // (sin las cabeceras PEM, con \n a medio convertir, etc.), es mejor
+      // avisar esto claramente en vez de dejar que google-auth-library
+      // truene más adelante con un "Cannot read properties of undefined
+      // (reading 'length')" que no dice nada útil.
+      if (!privateKey.includes("BEGIN PRIVATE KEY")) {
+        return res.status(500).json({
+          ok: false,
+          error:
+            "FIREBASE_PRIVATE_KEY no tiene el formato PEM esperado (falta '-----BEGIN PRIVATE KEY-----'). " +
+            "Vuelve a copiar el valor completo del JSON de la cuenta de servicio, con comillas incluidas.",
+        });
+      }
+
       admin.initializeApp({
         credential: admin.credential.cert({
           projectId: process.env.FIREBASE_PROJECT_ID,
           clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+          privateKey,
         }),
       });
     }
