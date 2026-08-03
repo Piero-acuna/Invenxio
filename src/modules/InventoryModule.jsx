@@ -4,13 +4,14 @@
 // stock y generación de código de barras/SKU.
 // Extraído de InventorySystem.jsx al separar el monolito por módulos.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Search, X, Plus, Package, History, ArrowUpCircle, ArrowDownCircle,
   AlertTriangle, CheckCircle, Edit3, Box, Zap, Loader2, ScanBarcode, Save,
 } from "lucide-react";
 import {
   addProduct, updateProduct, deleteProduct, adjustProductStock,
+  subscribeToProductHistory,
 } from "../services/firestoreService";
 import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
@@ -35,10 +36,26 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
   const [adjustType,      setAdjustType]      = useState("add");
   const [adjusting,       setAdjusting]       = useState(false);
 
+  // Historial del producto seleccionado — vive en la subcolección
+  // products/{id}/history (ver src/services/firestore/products.js), NO en
+  // un array dentro del propio documento del producto. Se suscribe bajo
+  // demanda, solo mientras el detalle de ese producto está abierto.
+  const [productHistory,        setProductHistory]        = useState([]);
+  const [loadingProductHistory, setLoadingProductHistory]  = useState(false);
+  useEffect(() => {
+    if (!selectedProductId) { setProductHistory([]); return; }
+    setLoadingProductHistory(true);
+    const unsub = subscribeToProductHistory(companyId, selectedProductId, (items) => {
+      setProductHistory(items);
+      setLoadingProductHistory(false);
+    });
+    return unsub;
+  }, [companyId, selectedProductId]);
+
   // Nuevo producto
   const [showNewProd, setShowNewProd] = useState(false);
   const [newProd, setNewProd] = useState({
-    name: "", sku: "", price: "", cost: "", stock: "", minStock: "4",
+    name: "", sku: "", description: "", price: "", cost: "", stock: "", minStock: "4",
     packQty: "", barcode: "",
   });
   const [saving,      setSaving]      = useState(false);
@@ -59,6 +76,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
     setEditForm({
       name: p.name || "",
       sku: p.sku || "",
+      description: p.description || "",
       price: p.price ?? "",
       cost: p.cost ?? "",
       stock: p.stock ?? "",
@@ -91,6 +109,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
       await addProduct(companyId, {
         name: newProd.name,
         sku:  newProd.sku,
+        description: newProd.description || "",
         price:    Number(newProd.price) || 0,
         cost:     Number(newProd.cost) || 0,
         stock,
@@ -98,10 +117,9 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
         packQty:  packQty || null,
         barcode:  newProd.barcode || generateBarcode(),
         status:   stock === 0 ? "Agotado" : stock <= minStock ? "Stock Bajo" : "En Stock",
-        history:  [],
       });
       setShowNewProd(false);
-      setNewProd({ name: "", sku: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" });
+      setNewProd({ name: "", sku: "", description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" });
     } catch (err) { console.error(err); }
     setSaving(false);
   };
@@ -122,6 +140,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
       await updateProduct(companyId, editProd.id, {
         name: editForm.name,
         sku: editForm.sku,
+        description: editForm.description || "",
         price: !isNaN(price) ? price : editProd.price,
         cost: !isNaN(cost) ? cost : editProd.cost,
         stock: finalStock,
@@ -265,6 +284,13 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                   <BarcodeDisplay value={selectedProduct.barcode} showDownload productName={selectedProduct.name} />
                 </div>
               )}
+              {/* Descripción */}
+              {selectedProduct.description && (
+                <div className="bg-slate-800/60 rounded-lg p-3 border border-slate-700/50">
+                  <p className="text-xs text-slate-400 mb-1">Descripción</p>
+                  <p className="text-sm text-slate-300 whitespace-pre-wrap">{selectedProduct.description}</p>
+                </div>
+              )}
               {/* Info grid */}
               <div className="grid grid-cols-2 gap-3">
                 {[
@@ -317,23 +343,25 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
               <div>
                 <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><History size={14} className="text-amber-400" />Historial</h4>
                 <div className="space-y-2">
-                  {(selectedProduct.history || []).map((h, i) => {
-                    const isIncrease = h.action.includes("Compra") || h.action.includes("Recibido") || h.action.includes("+");
-                    return (
-                    <div key={i} className="flex items-center gap-3 p-3 bg-slate-800/40 rounded-lg border border-slate-700/30">
-                      <div className={`p-1.5 rounded-lg ${isIncrease ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
-                        {isIncrease ? <ArrowUpCircle size={13} /> : <ArrowDownCircle size={13} />}
+                  {loadingProductHistory ? <Spinner /> : (<>
+                    {productHistory.map((h, i) => {
+                      const isIncrease = h.action?.includes("Compra") || h.action?.includes("Recibido") || h.action?.includes("+");
+                      return (
+                      <div key={h.id || i} className="flex items-center gap-3 p-3 bg-slate-800/40 rounded-lg border border-slate-700/30">
+                        <div className={`p-1.5 rounded-lg ${isIncrease ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+                          {isIncrease ? <ArrowUpCircle size={13} /> : <ArrowDownCircle size={13} />}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-xs font-medium text-slate-300">
+                            {h.action} <span className={`font-mono font-bold ${isIncrease ? "text-emerald-400" : "text-red-400"}`}>{isIncrease ? "+" : "-"}{h.qty}</span>
+                          </p>
+                          <p className="text-xs text-slate-500">{h.date} · {h.user}</p>
+                        </div>
                       </div>
-                      <div className="flex-1">
-                        <p className="text-xs font-medium text-slate-300">
-                          {h.action} <span className={`font-mono font-bold ${isIncrease ? "text-emerald-400" : "text-red-400"}`}>{isIncrease ? "+" : "-"}{h.qty}</span>
-                        </p>
-                        <p className="text-xs text-slate-500">{h.date} · {h.user}</p>
-                      </div>
-                    </div>
-                    );
-                  })}
-                  {!(selectedProduct.history?.length) && <p className="text-xs text-slate-600 text-center py-4">Sin historial</p>}
+                      );
+                    })}
+                    {productHistory.length === 0 && <p className="text-xs text-slate-600 text-center py-4">Sin historial</p>}
+                  </>)}
                 </div>
               </div>
 
@@ -383,6 +411,12 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                     <label className="text-xs text-slate-400 mb-1 block">Unidades por Empaque</label>
                     <input type="number" min="1" value={newProd.packQty} onChange={e => setNewProd(p => ({ ...p, packQty: e.target.value }))} placeholder="Ej: 12"
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
+                    <p className="text-[10px] text-slate-500 mb-1">Se muestra al vender y en el comprobante</p>
+                    <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: Talla M, color azul, incluye garantía de 6 meses…" rows={2}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
                   </div>
                 </div>
               </div>
@@ -514,6 +548,12 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                     <label className="text-xs text-slate-400 mb-1 block">Unidades por Empaque</label>
                     <input type="number" min="1" value={editForm.packQty} onChange={e => setEditForm(p => ({ ...p, packQty: e.target.value }))} placeholder="Ej: 12"
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
+                    <p className="text-[10px] text-slate-500 mb-1">Se muestra al vender y en el comprobante</p>
+                    <textarea value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} placeholder="Ej: Talla M, color azul, incluye garantía de 6 meses…" rows={2}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
                   </div>
                 </div>
               </div>

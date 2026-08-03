@@ -38,4 +38,15 @@ const Spinner = () => (
   </div>
 );
 
-export { StatusBadge, Stars, Spinner };
+// Estado vacío genérico (ícono + mensaje + sub-mensaje opcional). Antes vivía
+// solo dentro de WarehouseModule.jsx; se movió acá porque es igual de útil
+// para cualquier otro módulo con listas que pueden estar vacías.
+const EmptyState = ({ icon, msg, sub }) => (
+  <div className="flex flex-col items-center justify-center py-16 text-slate-600 gap-2">
+    <span className="opacity-30">{icon}</span>
+    <p className="text-sm">{msg}</p>
+    {sub && <p className="text-xs text-slate-700">{sub}</p>}
+  </div>
+);
+
+export { StatusBadge, Stars, Spinner, EmptyState };

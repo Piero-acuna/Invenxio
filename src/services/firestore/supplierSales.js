@@ -24,7 +24,7 @@ export async function addSupplierSale(companyId, sale) {
  * producto sale definitivamente del negocio.
  */
 export async function sellWarehouseToSupplier(companyId, {
-  warehouseProductId, warehouseProductName, sku,
+  warehouseProductId, warehouseProductName, sku, description,
   locationId, locationName,
   packCount, packName, packQty,
   unitPricePerPack, supplierName,
@@ -43,12 +43,14 @@ export async function sellWarehouseToSupplier(companyId, {
     packName, packQty,
   });
 
-  // 2. Registro de la venta al proveedor. Guardamos también el producto y
-  //    la ubicación de origen en el almacén — así, si la venta se cancela
-  //    más adelante, sabemos exactamente a dónde devolver el stock.
+  // 2. Registro de la venta al proveedor. Guardamos también el producto, su
+  //    descripción (para el comprobante) y la ubicación de origen en el
+  //    almacén — así, si la venta se cancela más adelante, sabemos
+  //    exactamente a dónde devolver el stock.
   return addSupplierSale(companyId, {
     supplier: supplierName,
     product: warehouseProductName,
+    description: description || "",
     sku: sku || "",
     qty: packCount, packName: packName || null, packQty: packQty || null,
     unitPrice: unitPricePerPack, total,

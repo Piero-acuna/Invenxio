@@ -19,7 +19,7 @@ import { addWarehouseMovement } from "./warehouse";
  *  3. Actualiza métricas del proveedor
  */
 export async function recordPurchase(companyId, {
-  supplierId, supplierName, productId, productName, sku,
+  supplierId, supplierName, productId, productName, sku, description,
   qty, unitCost, total, note, userName,
   // Equivalencias: si la compra fue en empaques
   packMode = false, packQty = 0, packName = "", baseUnitName = "",
@@ -46,7 +46,7 @@ export async function recordPurchase(companyId, {
     // 2. Transacción — guarda tanto la qty base como la info del empaque
     tx.set(txRef, {
       type: "compra", date: today,
-      product: productName, sku,
+      product: productName, sku, description: description || "",
       qty,          // siempre en unidades base
       unitCost, total,
       supplier: supplierName,
@@ -97,7 +97,7 @@ export async function recordPurchase(companyId, {
  */
 export async function recordWarehousePurchase(companyId, {
   supplierId, supplierName,
-  warehouseProductId, warehouseProductName, sku,
+  warehouseProductId, warehouseProductName, sku, description,
   locationId, locationName,
   packCount, packName, packQty,
   unitCost, note, userName,
@@ -110,7 +110,7 @@ export async function recordWarehousePurchase(companyId, {
   // 1. Transacción — queda en el historial general de compras (con costo).
   await addDoc(colRef(companyId, "transactions"), {
     type: "compra", target: "almacen", date: today, time,
-    product: warehouseProductName, sku,
+    product: warehouseProductName, sku, description: description || "",
     qty: packCount, packName: packName || null, packQty: packQty || null,
     unitCost, total,
     supplier: supplierName,
@@ -205,7 +205,7 @@ export async function recordSale(companyId, { cartItems, userName, clientName = 
 
       tx.set(txRefs[i], {
         type: "venta", date: today,
-        product: item.name, sku: item.sku,
+        product: item.name, sku: item.sku, description: p.description || "",
         qty: item.qty,                  // unidades base descontadas del stock
         // Precio: SIEMPRE el que se acaba de leer del documento real del
         // producto (p.price) dentro de esta transacción, NUNCA item.price

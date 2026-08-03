@@ -129,7 +129,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         source: t.type === "compra" && t.target === "almacen" ? "Proveedores" : "Inventario",
         type: t.type,
         date: t.date, time: t.time || "",
-        product: t.product, sku: t.sku, qty: t.qty, unit: t.packName || "",
+        product: t.product, sku: t.sku, description: t.description || "", qty: t.qty, unit: t.packName || "",
         amount: t.total ?? null,
         party: t.supplier || t.client || "—",
         note: t.note || "",
@@ -144,7 +144,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
           source: "Proveedores",
           type: "venta_proveedor",
           date: s.date, time: s.time || "",
-          product: s.product, sku: s.sku, qty: s.qty, unit: s.packName || "",
+          product: s.product, sku: s.sku, description: s.description || "", qty: s.qty, unit: s.packName || "",
           amount: s.total ?? null,
           party: s.supplier || "—",
           note: s.status === "Cancelado" ? `Cancelada${s.note ? " · " + s.note : ""}` : (s.note || ""),
@@ -187,6 +187,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       const sourceKey = t.source === "Inventario" ? "inventario" : t.source === "Almacén" ? "almacen" : "proveedores";
       return (sourceF === "all" || sourceF === sourceKey) &&
         (t.product?.toLowerCase().includes(q) || t.sku?.toLowerCase().includes(q) ||
+         t.description?.toLowerCase().includes(q) ||
          (t.party || "").toLowerCase().includes(q));
     }), [unifiedHistory, sourceF, search]);
 
@@ -206,6 +207,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         "Fecha":              t.date || "",
         "Hora":               t.time || "",
         "Producto":           t.product || "",
+        "Descripción":        t.description || "",
         "SKU":                t.sku || "",
         "Cantidad":           t.qty ?? "",
       };
@@ -234,8 +236,8 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       const isVentaProveedor = t.type === "venta_proveedor";
       // Una transacción puede tener múltiples ítems (carrito) o uno solo
       const items = raw.items?.length
-        ? raw.items.map(i => ({ name: i.name, qty: i.qty, unitPrice: i.price ?? i.unitPrice, total: (i.price ?? i.unitPrice) * i.qty }))
-        : [{ name: t.product || "—", qty: t.qty, unitPrice: raw.unitCost ?? raw.unitPrice ?? 0, total: t.amount ?? 0 }];
+        ? raw.items.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price ?? i.unitPrice, total: (i.price ?? i.unitPrice) * i.qty }))
+        : [{ name: t.product || "—", description: t.description || "", qty: t.qty, unitPrice: raw.unitCost ?? raw.unitPrice ?? 0, total: t.amount ?? 0 }];
       generateInvoicePDF({
         billing,
         docType:     isVenta ? "VENTA" : "PROVEEDOR",
@@ -456,6 +458,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                       <td className="py-2.5 px-3">
                         <div className="text-slate-200 font-medium">{t.product}</div>
                         <div className="text-slate-500 font-mono">{t.sku}</div>
+                        {t.description && <div className="text-slate-500 text-[11px] max-w-xs truncate">{t.description}</div>}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-300">{t.qty}{t.unit ? <span className="text-slate-500 font-normal"> {t.unit}</span> : ""}</td>
                       {canViewFinance && (
