@@ -17,9 +17,26 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import jsPDF from "jspdf";
 
+// ── Paleta (coherente con la UI: acentos emerald sobre base slate) ──
+const COLOR = {
+  brand: [4, 120, 87],       // emerald-700 — franja superior y acentos fuertes
+  brandLight: [5, 150, 105], // emerald-600 — encabezado de tabla
+  brandTint: [236, 253, 245],// emerald-50  — fondos suaves
+  ink: [30, 41, 59],         // slate-800   — texto principal
+  sub: [100, 116, 139],      // slate-500   — texto secundario
+  faint: [148, 163, 184],    // slate-400   — texto terciario / pie
+  line: [226, 232, 240],     // slate-200   — líneas y bordes
+  rowAlt: [248, 250, 252],   // slate-50    — filas alternas
+  white: [255, 255, 255],
+};
+
 function fmtMoney(n) {
   return `S/ ${Number(n || 0).toFixed(2)}`;
 }
+
+function setFill(pdf, c) { pdf.setFillColor(c[0], c[1], c[2]); }
+function setDraw(pdf, c) { pdf.setDrawColor(c[0], c[1], c[2]); }
+function setText(pdf, c) { pdf.setTextColor(c[0], c[1], c[2]); }
 
 /**
  * @param {Object} params
@@ -38,99 +55,193 @@ export function generateInvoicePDF({
   items = [], total = 0, invoiceNumber, note = "",
 }) {
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
+  const pageW = 210;
+  const pageH = 297;
   const marginX = 18;
-  let y = 20;
+  const contentW = pageW - marginX * 2; // 174
+  const rightX = marginX + contentW;    // 192
+  let y = 0;
 
   const serie = (billing?.serie || "F001").toUpperCase();
   const correlativo = String(invoiceNumber || 1).padStart(6, "0");
   const fecha = new Date().toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const isCompra = docType === "PROVEEDOR";
 
-  // ── Encabezado: datos del emisor (Dueño) ──
+  const addLegalFooter = () => {
+    setDraw(pdf, COLOR.line);
+    pdf.setLineWidth(0.3);
+    pdf.line(marginX, 280, rightX, 280);
+    setText(pdf, COLOR.faint);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7);
+    pdf.text(
+      "Documento de uso interno. No constituye un comprobante de pago electrónico autorizado por SUNAT.",
+      marginX, 285
+    );
+  };
+
+  const paintHeaderBand = () => {
+    // Franja superior de marca
+    setFill(pdf, COLOR.brand);
+    pdf.rect(0, 0, pageW, 4, "F");
+  };
+
+  paintHeaderBand();
+  y = 16;
+
+  // ── Encabezado: datos del emisor (izquierda) ──
+  setText(pdf, COLOR.ink);
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(13);
+  pdf.setFontSize(15);
   pdf.text(billing?.razonSocial || "Mi Empresa", marginX, y);
+  y += 6;
+
+  setText(pdf, COLOR.sub);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
-  y += 6;
-  if (billing?.ruc)       { pdf.text(`RUC/DNI: ${billing.ruc}`, marginX, y); y += 5; }
-  if (billing?.direccion) { pdf.text(billing.direccion, marginX, y); y += 5; }
+  if (billing?.ruc) { pdf.text(`RUC/DNI: ${billing.ruc}`, marginX, y); y += 4.8; }
+  if (billing?.direccion) {
+    const dirLines = pdf.splitTextToSize(billing.direccion, 105);
+    pdf.text(dirLines, marginX, y);
+    y += 4.8 * dirLines.length;
+  }
   const contacto = [billing?.telefono, billing?.email].filter(Boolean).join("   ·   ");
-  if (contacto) { pdf.text(contacto, marginX, y); y += 5; }
+  if (contacto) { pdf.text(contacto, marginX, y); y += 4.8; }
 
-  // ── Caja del comprobante (serie-correlativo) ──
-  pdf.setDrawColor(180);
-  pdf.rect(140, 14, 52, 22);
+  // ── Caja del comprobante (derecha, estilo "sello") ──
+  const boxW = 56, boxX = rightX - boxW, boxY = 14, boxH = 24;
+  setDraw(pdf, COLOR.brand);
+  pdf.setLineWidth(0.6);
+  pdf.roundedRect(boxX, boxY, boxW, boxH, 1.5, 1.5, "S");
+  setFill(pdf, COLOR.brand);
+  pdf.roundedRect(boxX, boxY, boxW, 7.5, 1.5, 1.5, "F");
+  pdf.rect(boxX, boxY + 4, boxW, 3.5, "F"); // cuadra las esquinas inferiores del bloque de título
+  setText(pdf, COLOR.white);
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(10);
-  pdf.text(docType === "PROVEEDOR" ? "COMPROBANTE DE COMPRA" : "COMPROBANTE DE VENTA", 166, 20, { align: "center" });
-  pdf.setFontSize(12);
-  pdf.text(`${serie}-${correlativo}`, 166, 27, { align: "center" });
+  pdf.setFontSize(9);
+  pdf.text(isCompra ? "COMPROBANTE DE COMPRA" : "COMPROBANTE DE VENTA", boxX + boxW / 2, boxY + 5, { align: "center" });
+
+  setText(pdf, COLOR.ink);
+  pdf.setFontSize(13);
+  pdf.text(`${serie}-${correlativo}`, boxX + boxW / 2, boxY + 15.5, { align: "center" });
+  setText(pdf, COLOR.sub);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
-  pdf.text(`Fecha: ${fecha}`, 166, 32, { align: "center" });
+  pdf.text(`Fecha de emisión: ${fecha}`, boxX + boxW / 2, boxY + 21, { align: "center" });
 
-  y = Math.max(y, 42) + 6;
-  pdf.setDrawColor(200);
-  pdf.line(marginX, y, 192, y);
-  y += 8;
+  y = Math.max(y, boxY + boxH) + 8;
 
   // ── Datos del cliente / proveedor ──
+  const partyBoxH = 14;
+  setFill(pdf, COLOR.brandTint);
+  pdf.roundedRect(marginX, y, contentW, partyBoxH, 1.5, 1.5, "F");
+  setText(pdf, COLOR.sub);
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(9);
-  pdf.text(`${partyLabel}:`, marginX, y);
+  pdf.setFontSize(7.5);
+  pdf.text((isCompra ? "PROVEEDOR" : "CLIENTE"), marginX + 4, y + 5.5);
+  setText(pdf, COLOR.ink);
   pdf.setFont("helvetica", "normal");
-  pdf.text(partyName || "—", marginX + 22, y);
-  y += 10;
+  pdf.setFontSize(10.5);
+  pdf.text(partyName || "—", marginX + 4, y + 11);
+  y += partyBoxH + 9;
 
   // ── Tabla de ítems ──
-  pdf.setFillColor(245, 245, 245);
-  pdf.rect(marginX, y, 174, 7, "F");
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(8.5);
-  pdf.text("Producto", marginX + 2, y + 5);
-  pdf.text("Cant.", 130, y + 5, { align: "right" });
-  pdf.text("P. Unit.", 158, y + 5, { align: "right" });
-  pdf.text("Total", 190, y + 5, { align: "right" });
-  y += 7;
+  const colProd = marginX + 3;
+  const colQty = marginX + contentW * 0.62;
+  const colUnit = marginX + contentW * 0.80;
+  const colTotal = rightX - 2;
+  const rowH = 7.5;
+  const headerH = 8.5;
+
+  const drawTableHeader = () => {
+    setFill(pdf, COLOR.brandLight);
+    pdf.rect(marginX, y, contentW, headerH, "F");
+    setText(pdf, COLOR.white);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8.5);
+    pdf.text("PRODUCTO", colProd, y + 5.7);
+    pdf.text("CANT.", colQty, y + 5.7, { align: "right" });
+    pdf.text("P. UNIT.", colUnit, y + 5.7, { align: "right" });
+    pdf.text("TOTAL", colTotal, y + 5.7, { align: "right" });
+    y += headerH;
+  };
+
+  drawTableHeader();
 
   pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8.7);
   items.forEach((it, i) => {
-    if (y > 265) { pdf.addPage(); y = 20; }
-    if (i % 2 === 1) { pdf.setFillColor(250, 250, 250); pdf.rect(marginX, y, 174, 7, "F"); }
-    pdf.text(String(it.name || "").slice(0, 45), marginX + 2, y + 5);
-    pdf.text(String(it.qty ?? ""), 130, y + 5, { align: "right" });
-    pdf.text(fmtMoney(it.unitPrice), 158, y + 5, { align: "right" });
-    pdf.text(fmtMoney(it.total), 190, y + 5, { align: "right" });
-    y += 7;
+    if (y > 262) {
+      addLegalFooter();
+      pdf.addPage();
+      paintHeaderBand();
+      y = 20;
+      drawTableHeader();
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8.7);
+    }
+    if (i % 2 === 1) { setFill(pdf, COLOR.rowAlt); pdf.rect(marginX, y, contentW, rowH, "F"); }
+    setText(pdf, COLOR.ink);
+    pdf.text(String(it.name || "").slice(0, 48), colProd, y + 5.1);
+    setText(pdf, COLOR.sub);
+    pdf.text(String(it.qty ?? ""), colQty, y + 5.1, { align: "right" });
+    pdf.text(fmtMoney(it.unitPrice), colUnit, y + 5.1, { align: "right" });
+    setText(pdf, COLOR.ink);
+    pdf.setFont("helvetica", "bold");
+    pdf.text(fmtMoney(it.total), colTotal, y + 5.1, { align: "right" });
+    pdf.setFont("helvetica", "normal");
+    y += rowH;
   });
 
-  y += 4;
-  pdf.setDrawColor(200);
-  pdf.line(marginX, y, 192, y);
+  setDraw(pdf, COLOR.line);
+  pdf.setLineWidth(0.3);
+  pdf.line(marginX, y, rightX, y);
   y += 8;
 
+  // ── Total destacado ──
+  const totalBoxW = 68, totalBoxH = 13;
+  const totalBoxX = rightX - totalBoxW;
+  if (y + totalBoxH > 272) { addLegalFooter(); pdf.addPage(); paintHeaderBand(); y = 20; }
+  setFill(pdf, COLOR.ink);
+  pdf.roundedRect(totalBoxX, y, totalBoxW, totalBoxH, 1.5, 1.5, "F");
+  setText(pdf, COLOR.white);
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(11);
-  pdf.text("TOTAL:", 158, y, { align: "right" });
-  pdf.text(fmtMoney(total), 190, y, { align: "right" });
-  y += 12;
+  pdf.setFontSize(9.5);
+  pdf.text("TOTAL", totalBoxX + 6, y + 8.3);
+  pdf.setFontSize(13);
+  pdf.text(fmtMoney(total), rightX - 5, y + 8.6, { align: "right" });
+  y += totalBoxH + 10;
 
   if (note) {
+    if (y > 268) { addLegalFooter(); pdf.addPage(); paintHeaderBand(); y = 20; }
+    setDraw(pdf, COLOR.line);
+    setFill(pdf, COLOR.rowAlt);
+    pdf.setLineWidth(0.2);
+    const noteLines = pdf.splitTextToSize(note, contentW - 8);
+    const noteH = noteLines.length * 4.2 + 6;
+    pdf.roundedRect(marginX, y, contentW, noteH, 1.5, 1.5, "FD");
+    setText(pdf, COLOR.sub);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7.5);
+    pdf.text("NOTA", marginX + 4, y + 5);
+    setText(pdf, COLOR.ink);
     pdf.setFont("helvetica", "italic");
     pdf.setFontSize(8.5);
-    pdf.text(`Nota: ${note}`, marginX, y);
-    y += 8;
+    pdf.text(noteLines, marginX + 4, y + 9.5);
+    y += noteH + 6;
   }
 
-  // ── Pie legal ──
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(7);
-  pdf.setTextColor(140);
-  pdf.text(
-    "Documento de uso interno. No constituye un comprobante de pago electronico autorizado por SUNAT.",
-    marginX, 285
-  );
+  // ── Pie legal + numeración de página ──
+  const pageCount = pdf.internal.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    pdf.setPage(p);
+    addLegalFooter();
+    setText(pdf, COLOR.faint);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7);
+    pdf.text(`Página ${p} de ${pageCount}`, rightX, 285, { align: "right" });
+  }
 
-  pdf.save(`${docType === "PROVEEDOR" ? "Compra" : "Venta"}_${serie}-${correlativo}.pdf`);
+  pdf.save(`${isCompra ? "Compra" : "Venta"}_${serie}-${correlativo}.pdf`);
   return true;
 }

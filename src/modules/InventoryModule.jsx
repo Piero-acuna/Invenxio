@@ -415,7 +415,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                   <div className="col-span-2">
                     <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
                     <p className="text-[10px] text-slate-500 mb-1">Se muestra al vender y en el comprobante</p>
-                    <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: Talla M, color azul, incluye garantía de 6 meses…" rows={2}
+                    <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: color azul o negro" rows={2}
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
                   </div>
                 </div>
