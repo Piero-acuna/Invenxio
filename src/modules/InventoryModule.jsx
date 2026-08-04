@@ -238,7 +238,10 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center flex-shrink-0"><Package size={13} className="text-slate-400" /></div>
-                        <span className="text-slate-200 font-medium group-hover:text-amber-400 transition-colors">{p.name}</span>
+                        <div className="min-w-0">
+                          <span className="text-slate-200 font-medium group-hover:text-amber-400 transition-colors">{p.name}</span>
+                          {p.description && <p className="text-[11px] text-slate-500 truncate max-w-xs">{p.description}</p>}
+                        </div>
                       </div>
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell text-xs text-slate-400">{p.packQty ? `${p.packQty} und/empaque` : "—"}</td>

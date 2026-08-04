@@ -167,6 +167,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-200 group-hover:text-amber-400 transition-colors">{p.name}</p>
                         <p className="text-xs text-slate-500 font-mono">{p.sku} · Stock: {p.stock}</p>
+                        {p.description && <p className="text-[11px] text-slate-500 truncate">{p.description}</p>}
                       </div>
                       <div className="text-right mr-2">
                         <p className="text-sm font-bold font-mono text-amber-400">S/ {(p.price || 0).toFixed(2)}</p>
@@ -190,6 +191,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                             <Package size={14} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
                           </div>
                           <p className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 group-hover:text-amber-400 transition-colors">{p.name}</p>
+                          {p.description && <p className="text-[11px] text-slate-500 leading-tight line-clamp-1 mt-0.5">{p.description}</p>}
                           <p className="text-xs font-bold font-mono text-amber-400 mt-1.5">S/ {(p.price || 0).toFixed(2)}</p>
                           <div className="flex items-center justify-between mt-1">
                             <span className="text-xs text-slate-500 font-mono">x{p.stock}</span>
@@ -221,6 +223,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                 <div key={item.id} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-slate-200 truncate">{item.name}</p>
+                    {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
                     <p className="text-xs text-slate-500 font-mono">S/ {(item.price || 0).toFixed(2)} c/u</p>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">

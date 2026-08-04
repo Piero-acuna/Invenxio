@@ -800,11 +800,14 @@ function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId,
                 placeholder="Buscar por nombre o SKU…"
                 className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
               {form.product && (
-                <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-2">
-                  <Package size={13} className="text-amber-400 flex-shrink-0" />
-                  <span className="text-sm text-amber-400 font-medium truncate">{form.product.name}</span>
-                  <span className="text-xs font-mono text-slate-500 ml-1">{form.product.sku}</span>
-                  <button onClick={() => { setF("product", null); setF("productSearch", ""); }} className="ml-auto"><X size={13} className="text-slate-500" /></button>
+                <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Package size={13} className="text-amber-400 flex-shrink-0" />
+                    <span className="text-sm text-amber-400 font-medium truncate">{form.product.name}</span>
+                    <span className="text-xs font-mono text-slate-500 ml-1">{form.product.sku}</span>
+                    <button onClick={() => { setF("product", null); setF("productSearch", ""); }} className="ml-auto"><X size={13} className="text-slate-500" /></button>
+                  </div>
+                  {form.product.description && <p className="text-[11px] text-slate-500 mt-1 ml-[21px]">{form.product.description}</p>}
                 </div>
               )}
               {filtered.length > 0 && !form.product && (
@@ -825,9 +828,10 @@ function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId,
                         }
                       }}
                         className="w-full text-left px-3 py-2.5 hover:bg-slate-700 flex items-center justify-between gap-2 border-b border-slate-700/50 last:border-0">
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-sm text-slate-200">{p.name}</p>
                           <p className="text-xs font-mono text-slate-500">{p.sku}</p>
+                          {p.description && <p className="text-[11px] text-slate-500 truncate">{p.description}</p>}
                         </div>
                     <span className="text-xs font-mono text-amber-400 flex-shrink-0">Stock: {totalQty} {p.packName}</span>
                       </button>
@@ -877,12 +881,15 @@ function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId,
                   className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                 {form.storeProduct && (
                   <div className="mt-2 space-y-1">
-                    <div className="p-2 bg-sky-500/10 border border-sky-500/30 rounded-lg flex items-center gap-2">
-                      <Store size={13} className="text-sky-400 flex-shrink-0" />
-                      <span className="text-sm text-sky-300 font-medium truncate">{form.storeProduct.name}</span>
-                      <span className="text-xs font-mono text-slate-500 ml-1">{form.storeProduct.sku}</span>
-                      <span className="text-xs font-mono text-slate-500 ml-auto">Stock tienda: {form.storeProduct.stock ?? 0}</span>
-                      <button onClick={() => { setF("storeProduct", null); setF("storeProductSearch", ""); }}><X size={13} className="text-slate-500" /></button>
+                    <div className="p-2 bg-sky-500/10 border border-sky-500/30 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <Store size={13} className="text-sky-400 flex-shrink-0" />
+                        <span className="text-sm text-sky-300 font-medium truncate">{form.storeProduct.name}</span>
+                        <span className="text-xs font-mono text-slate-500 ml-1">{form.storeProduct.sku}</span>
+                        <span className="text-xs font-mono text-slate-500 ml-auto">Stock tienda: {form.storeProduct.stock ?? 0}</span>
+                        <button onClick={() => { setF("storeProduct", null); setF("storeProductSearch", ""); }}><X size={13} className="text-slate-500" /></button>
+                      </div>
+                      {form.storeProduct.description && <p className="text-[11px] text-slate-500 mt-1 ml-[21px]">{form.storeProduct.description}</p>}
                     </div>
                     {form.storeProduct.name?.trim().toLowerCase() !== form.product?.name?.trim().toLowerCase() && (
                       <p className="text-[11px] text-amber-400 flex items-center gap-1"><AlertTriangle size={11}/> El nombre no coincide exactamente con "{form.product?.name}". Verifica que sea el producto correcto.</p>
@@ -896,9 +903,10 @@ function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId,
                       return (
                         <button key={p.id} onClick={() => { setF("storeProduct", p); setF("storeProductSearch", p.name); }}
                           className={`w-full text-left px-3 py-2.5 hover:bg-slate-700 flex items-center justify-between gap-2 border-b border-slate-700/50 last:border-0 ${isMatch ? "bg-emerald-500/10" : ""}`}>
-                          <div>
+                          <div className="min-w-0">
                             <p className="text-sm text-slate-200">{p.name} {isMatch && <span className="text-emerald-400 text-[10px]">✓ coincide</span>}</p>
                             <p className="text-xs font-mono text-slate-500">{p.sku}</p>
+                            {p.description && <p className="text-[11px] text-slate-500 truncate">{p.description}</p>}
                           </div>
                           <span className="text-xs font-mono text-sky-400 flex-shrink-0">Stock: {p.stock ?? 0}</span>
                         </button>
