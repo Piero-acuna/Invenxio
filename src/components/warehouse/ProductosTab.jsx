@@ -16,6 +16,7 @@ import {
   addWarehouseProduct, updateWarehouseProduct, deleteWarehouseProduct,
   addWarehouseMovement,
 } from "../../services/firestoreService";
+import { logAndGetErrorMessage } from "../../utils/errors";
 import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
 
@@ -73,7 +74,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
         });
       }
       setShowForm(false); setEditItem(null); setForm(EMPTY_FORM);
-    } catch (e) { setError(e?.message || "Error al guardar el producto."); }
+    } catch (e) { setError(logAndGetErrorMessage(e, "Error al guardar producto de almacén:", "Error al guardar el producto.")); }
     setSaving(false);
   }
 
@@ -81,7 +82,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
     const hasStock = (stockByProduct[p.id] || []).some(s => s.qty > 0);
     if (hasStock) { alert("No puedes eliminar un producto con stock registrado en alguna ubicación. Trasládalo o envíalo a la tienda primero."); return; }
     if (!confirm(`¿Eliminar "${p.name}" del catálogo de almacén?`)) return;
-    try { await deleteWarehouseProduct(companyId, p.id); } catch (e) { console.error(e); }
+    try { await deleteWarehouseProduct(companyId, p.id); } catch (e) { alert(logAndGetErrorMessage(e, "Error al eliminar producto de almacén:", "No se pudo eliminar el producto.")); }
   }
 
   const filtered = warehouseProducts.filter(p =>

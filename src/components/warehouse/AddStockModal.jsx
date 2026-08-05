@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { X, RefreshCw, CheckCircle } from "lucide-react";
 import { addWarehouseMovement } from "../../services/firestoreService";
+import { logAndGetErrorMessage } from "../../utils/errors";
 
 export default function AddStockModal({ product, locations, companyId, userName, onClose }) {
   const [locationId, setLocationId] = useState("");
@@ -31,7 +32,7 @@ export default function AddStockModal({ product, locations, companyId, userName,
         packName: product.packName, packQty: product.packQty,
       });
       onClose();
-    } catch (e) { setError(e?.message || "Error al agregar stock."); }
+    } catch (e) { setError(logAndGetErrorMessage(e, "Error al agregar stock:", "Error al agregar stock.")); }
     setSaving(false);
   }
 

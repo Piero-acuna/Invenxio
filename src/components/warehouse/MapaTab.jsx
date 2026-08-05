@@ -10,6 +10,7 @@ import {
   MapPin, Warehouse,
 } from "lucide-react";
 import { addLocation, updateLocation, deleteLocation } from "../../services/firestoreService";
+import { logAndGetErrorMessage } from "../../utils/errors";
 import { EmptyState } from "../shared/StatusUI";
 import { LOCATION_TYPES } from "./constants";
 
@@ -33,13 +34,13 @@ export default function MapaTab({ locations, stockByLocation, stockByProduct, wa
       }
       setLocForm({ name: "", type: "Zona", code: "", description: "" });
       setEditLoc(null); setShowLocForm(false);
-    } catch (e) { setLocError(e?.message || "Error al guardar."); }
+    } catch (e) { setLocError(logAndGetErrorMessage(e, "Error al guardar ubicación:", "Error al guardar.")); }
     setSavingLoc(false);
   }
 
   async function handleDeleteLoc(loc) {
     if (!confirm(`¿Eliminar la ubicación "${loc.name}"? El stock registrado aquí se perderá.`)) return;
-    try { await deleteLocation(companyId, loc.id); } catch (e) { console.error(e); }
+    try { await deleteLocation(companyId, loc.id); } catch (e) { alert(logAndGetErrorMessage(e, "Error al eliminar ubicación:", "No se pudo eliminar la ubicación.")); }
   }
 
   // Mapa rápido productId → producto (para sacar packName/packQty/unitPrice,

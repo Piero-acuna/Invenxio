@@ -16,6 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useRef } from "react";
 import { Lock, CreditCard, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { logAndGetErrorMessage } from "../utils/errors";
 
 const CULQI_SCRIPT_URL = "https://checkout.culqi.com/js/v4";
 const PLAN_AMOUNT_SOLES = 54.99; // S/ 54.99 al mes — ajusta este número a tu precio real
@@ -99,9 +100,8 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
           // InventorySystem.jsx detecta el cambio en Firestore (escrito por
           // el backend) y esta pantalla desaparece sola en cuanto llegue.
         } catch (e) {
-          console.error(e);
           setStatus("error");
-          setErrorMsg(e.message || "No se pudo confirmar el pago. Si tu tarjeta fue cargada, contáctanos.");
+          setErrorMsg(logAndGetErrorMessage(e, "Error al procesar el cobro:", "No se pudo confirmar el pago. Si tu tarjeta fue cargada, contáctanos."));
         }
       };
 
@@ -109,7 +109,7 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
       window.Culqi.open();
     } catch (e) {
       setStatus("error");
-      setErrorMsg(e.message || "No se pudo abrir la ventana de pago.");
+      setErrorMsg(logAndGetErrorMessage(e, "Error al abrir ventana de pago:", "No se pudo abrir la ventana de pago."));
     }
   }
 

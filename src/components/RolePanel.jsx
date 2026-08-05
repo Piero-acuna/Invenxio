@@ -14,6 +14,7 @@ import {
   Package, BarChart2, Warehouse, Truck, Sliders, Zap,
 } from "lucide-react";
 import { PERMISSION_GROUPS, defaultPermissions, getEffectivePermissions } from "../config/permissions";
+import { logAndGetErrorMessage } from "../utils/errors";
 
 // Iconos por grupo de permisos (solo visual, permissions.js se queda sin JSX)
 const GROUP_ICONS = {
@@ -372,7 +373,7 @@ function BillingTab({ billing, onSave }) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      setError(err?.message || "No se pudo guardar.");
+      setError(logAndGetErrorMessage(err, "Error al guardar datos de facturación:", "No se pudo guardar."));
     }
     setSaving(false);
   }
@@ -517,7 +518,7 @@ function EmployeeForm({ onSubmit, onCancel }) {
       await onSubmit({ name, email, password, permissions });
       setSuccess(true);
     } catch (err) {
-      setError(err?.message || "No se pudo registrar al empleado.");
+      setError(logAndGetErrorMessage(err, "Error al registrar empleado:", "No se pudo registrar al empleado."));
     }
     setLoading(false);
   }

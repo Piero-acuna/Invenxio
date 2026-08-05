@@ -12,6 +12,7 @@ import {
   Warehouse, X, Package, Search, RefreshCw, CheckCircle, AlertTriangle, Store,
 } from "lucide-react";
 import { addWarehouseMovement, sendWarehouseToInventory } from "../../services/firestoreService";
+import { logAndGetErrorMessage } from "../../utils/errors";
 import { TYPE_CFG, SELECTABLE_MOVEMENT_TYPES } from "./constants";
 
 export default function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId, userName, stockByProduct }) {
@@ -102,7 +103,7 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
       setSuccess(true);
       setTimeout(() => { setSuccess(false); setForm(EMPTY); }, 2500);
     } catch (e) {
-      setError(e?.message || "Error al registrar el movimiento.");
+      setError(logAndGetErrorMessage(e, "Error al registrar movimiento de almacén:", "Error al registrar el movimiento."));
     }
     setSaving(false);
   }
@@ -160,6 +161,9 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
                   <button onClick={() => { setF("product", null); setF("productSearch", ""); }} className="ml-auto"><X size={13} className="text-slate-500" /></button>
                 </div>
               )}
+              {form.product?.description && (
+                <p className="text-[11px] text-slate-500 mt-1">{form.product.description}</p>
+              )}
               {filtered.length > 0 && !form.product && (
                 <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
                   {filtered.slice(0, 6).map(p => {
@@ -178,9 +182,10 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
                         }
                       }}
                         className="w-full text-left px-3 py-2.5 hover:bg-slate-700 flex items-center justify-between gap-2 border-b border-slate-700/50 last:border-0">
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-sm text-slate-200">{p.name}</p>
                           <p className="text-xs font-mono text-slate-500">{p.sku}</p>
+                          {p.description && <p className="text-[11px] text-slate-500 truncate">{p.description}</p>}
                         </div>
                     <span className="text-xs font-mono text-amber-400 flex-shrink-0">Stock: {totalQty} {p.packName}</span>
                       </button>

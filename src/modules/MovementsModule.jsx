@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { recordSale, getNextInvoiceNumber } from "../services/firestoreService";
 import { generateInvoicePDF } from "../utils/generateInvoicePDF";
+import { logAndGetErrorMessage } from "../utils/errors";
 import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner } from "../components/shared/StatusUI";
 import TransactionHistory from "../components/TransactionHistory";
@@ -97,7 +98,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
             docType: "VENTA",
             partyLabel: "Cliente",
             partyName: clientName.trim() || "Cliente varios",
-            items: cart.map(i => ({ name: i.name, qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
+            items: cart.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
             total: cartTotal,
           });
         } catch (invErr) {
@@ -108,12 +109,11 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
 
       setTimeout(() => { setSSuccess(false); setCart([]); setClientName(""); setInvoiceMsg(""); }, 3500);
     } catch (err) {
-      console.error(err);
       // recordSale ahora valida el stock real del servidor dentro de la
       // transacción y lanza un Error con un mensaje legible cuando no
       // alcanza el stock o el producto ya no existe — se lo mostramos
       // directamente al cajero en vez de dejarlo solo en consola.
-      setSaleError(err?.message || "No se pudo registrar la venta. Intenta de nuevo.");
+      setSaleError(logAndGetErrorMessage(err, "Error al registrar la venta:", "No se pudo registrar la venta. Intenta de nuevo."));
     }
     setSSaving(false);
   };
@@ -167,7 +167,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-200 group-hover:text-amber-400 transition-colors">{p.name}</p>
                         <p className="text-xs text-slate-500 font-mono">{p.sku} · Stock: {p.stock}</p>
-                        {p.description && <p className="text-[11px] text-slate-500 truncate">{p.description}</p>}
+                        {p.description && <p className="text-xs text-slate-500 truncate mt-0.5">{p.description}</p>}
                       </div>
                       <div className="text-right mr-2">
                         <p className="text-sm font-bold font-mono text-amber-400">S/ {(p.price || 0).toFixed(2)}</p>
@@ -223,8 +223,8 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                 <div key={item.id} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-slate-200 truncate">{item.name}</p>
-                    {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
                     <p className="text-xs text-slate-500 font-mono">S/ {(item.price || 0).toFixed(2)} c/u</p>
+                    {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button onClick={() => setCart(prev => prev.map(i => i.id === item.id ? { ...i, qty: Math.max(1, i.qty - 1) } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Minus size={10} className="text-slate-300" /></button>

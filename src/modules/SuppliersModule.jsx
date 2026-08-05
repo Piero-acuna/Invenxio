@@ -20,6 +20,7 @@ import {
 } from "../services/firestoreService";
 import { exportToExcel } from "../utils/exportExcel";
 import { generateInvoicePDF } from "../utils/generateInvoicePDF";
+import { logAndGetErrorMessage } from "../utils/errors";
 import { useCollection } from "../hooks/useCollection";
 import SupplierListTab from "../components/suppliers/SupplierListTab";
 import SupplierSaleTab from "../components/suppliers/SupplierSaleTab";
@@ -139,8 +140,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
       });
       setTimeout(() => { setPSuccess(false); setPMsg(""); setPForm({ supplier: "", product: null, productSearch: "", locationId: "", packCount: "", unitCost: "", note: "" }); }, 5000);
     } catch (err) {
-      console.error(err);
-      setPError(err?.message || "Error al registrar la compra.");
+      setPError(logAndGetErrorMessage(err, "Error al registrar compra a proveedor:", "Error al registrar la compra."));
     }
     setPSaving(false);
   };
@@ -170,8 +170,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
       setEditSupplier(null);
       setShowModal(false);
     } catch (err) {
-      console.error("Error guardando proveedor:", err);
-      setSaveError(err?.message || "Error al guardar. Revisa la consola.");
+      setSaveError(logAndGetErrorMessage(err, "Error guardando proveedor:", "Error al guardar. Revisa la consola."));
     }
     setSaving(false);
   };
@@ -194,7 +193,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
     e.stopPropagation();
     const next = s.status === "Activo" ? "Inactivo" : "Activo";
     try { await updateSupplier(companyId, s.id, { status: next }); }
-    catch (err) { console.error("Error cambiando estado:", err); }
+    catch (err) { alert(logAndGetErrorMessage(err, "Error cambiando estado del proveedor:", "No se pudo cambiar el estado del proveedor.")); }
   };
 
   const handleDeleteSupplier = async (supplier) => {
@@ -203,8 +202,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
       try {
         await deleteSupplier(companyId, supplier.id);
       } catch (err) {
-        console.error("Error deleting supplier:", err);
-        alert("Hubo un error al eliminar el proveedor.");
+        alert(logAndGetErrorMessage(err, "Error al eliminar proveedor:", "Hubo un error al eliminar el proveedor."));
       }
     }
   };
@@ -239,8 +237,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
       }
       setTimeout(() => { setSsSuccess(false); setSsForm({ supplier: "", product: null, productSearch: "", locationId: "", qty: "", unitPrice: "", note: "", status: "Entregado" }); }, 2500);
     } catch (err) {
-      console.error(err);
-      setSsError(err?.message || "Error al registrar la venta.");
+      setSsError(logAndGetErrorMessage(err, "Error al registrar venta a proveedor:", "Error al registrar la venta."));
     }
     setSsSaving(false);
   };
@@ -265,8 +262,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
         partyName: partyName || "—", items, total, note: note || "", invoiceNumber,
       });
     } catch (err) {
-      console.error("Error al generar comprobante:", err);
-      setInvoiceMsgSupplier("Ocurrió un error al generar el comprobante.");
+      setInvoiceMsgSupplier(logAndGetErrorMessage(err, "Error al generar comprobante:", "Ocurrió un error al generar el comprobante."));
       setTimeout(() => setInvoiceMsgSupplier(""), 4500);
     }
   }
@@ -282,8 +278,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
         note: sale.note,
       });
     } catch (err) {
-      console.error("Error al marcar entregado / generar comprobante:", err);
-      setInvoiceMsgSupplier("Ocurrió un error al generar el comprobante.");
+      setInvoiceMsgSupplier(logAndGetErrorMessage(err, "Error al marcar entregado / generar comprobante:", "Ocurrió un error al generar el comprobante."));
       setTimeout(() => setInvoiceMsgSupplier(""), 4500);
     }
   }
@@ -298,8 +293,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
       await cancelSupplierSale(companyId, sale, userName);
       alert(hasReturn ? "Venta cancelada. El stock volvió al almacén." : "Venta marcada como cancelada. Recuerda ajustar el stock manualmente.");
     } catch (err) {
-      console.error("Error al cancelar la venta:", err);
-      alert("Ocurrió un error al cancelar la venta.");
+      alert(logAndGetErrorMessage(err, "Error al cancelar venta a proveedor:", "Ocurrió un error al cancelar la venta."));
     }
   }
 

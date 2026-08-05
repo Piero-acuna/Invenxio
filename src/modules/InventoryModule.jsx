@@ -13,6 +13,7 @@ import {
   addProduct, updateProduct, deleteProduct, adjustProductStock,
   subscribeToProductHistory,
 } from "../services/firestoreService";
+import { logAndGetErrorMessage } from "../utils/errors";
 import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
 import { BarcodeDisplay } from "../components/BarcodeUI";
@@ -35,6 +36,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
   const [adjustQty,       setAdjustQty]       = useState("");
   const [adjustType,      setAdjustType]      = useState("add");
   const [adjusting,       setAdjusting]       = useState(false);
+  const [adjustError,     setAdjustError]     = useState("");
 
   // Historial del producto seleccionado — vive en la subcolección
   // products/{id}/history (ver src/services/firestore/products.js), NO en
@@ -59,11 +61,13 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
     packQty: "", barcode: "",
   });
   const [saving,      setSaving]      = useState(false);
+  const [saveError,   setSaveError]   = useState("");
 
   // Editar producto
   const [editProd,    setEditProd]    = useState(null);
   const [editForm,    setEditForm]    = useState({});
   const [editSaving,  setEditSaving]  = useState(false);
+  const [editError,   setEditError]   = useState("");
 
   const filtered = useMemo(() => products.filter(p => {
     const q = search.toLowerCase();
@@ -85,23 +89,26 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
       barcode: p.barcode || "",
     });
     setEditProd(p);
+    setEditError("");
   };
 
   const handleAdjust = async () => {
     const hasPacking = Number(selectedProduct?.packQty) > 0;
     const qty = hasPacking ? Number(adjustQty) * Number(selectedProduct.packQty) : Number(adjustQty);
     if (!adjustQty || qty <= 0) return;
-    setAdjusting(true);
+    setAdjusting(true); setAdjustError("");
     try {
       await adjustProductStock(companyId, selectedProduct.id, { type: adjustType, qty, user: userName });
       setAdjustQty("");
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      setAdjustError(logAndGetErrorMessage(err, "Error al ajustar stock:"));
+    }
     setAdjusting(false);
   };
 
   const handleAddProduct = async () => {
     if (!newProd.name || !newProd.sku) return;
-    setSaving(true);
+    setSaving(true); setSaveError("");
     try {
       const packQty  = Number(newProd.packQty) || 0;
       const stock    = packQty > 0 ? (Number(newProd.stock) || 0) * packQty : (Number(newProd.stock) || 0);
@@ -120,13 +127,15 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
       });
       setShowNewProd(false);
       setNewProd({ name: "", sku: "", description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" });
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      setSaveError(logAndGetErrorMessage(err, "Error al crear producto:"));
+    }
     setSaving(false);
   };
 
   const handleEditSave = async () => {
     if (!editProd || !editForm.name || !editForm.sku) return;
-    setEditSaving(true);
+    setEditSaving(true); setEditError("");
     try {
       const price = parseFloat(editForm.price);
       const cost = parseFloat(editForm.cost);
@@ -151,7 +160,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
       });
       setEditProd(null);
     } catch (err) {
-      console.error(err);
+      setEditError(logAndGetErrorMessage(err, "Error al editar producto:"));
     }
     setEditSaving(false);
   };
@@ -163,8 +172,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
         await deleteProduct(companyId, selectedProduct.id);
         setSelectedProdId(null);
       } catch (err) {
-        console.error("Error deleting product:", err);
-        alert("Hubo un error al eliminar el producto.");
+        alert(logAndGetErrorMessage(err, "Error al eliminar producto:", "Hubo un error al eliminar el producto."));
       }
     }
   };
@@ -207,7 +215,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
           ))}
         </div>
         {canCreate && (
-          <button onClick={() => setShowNewProd(true)}
+          <button onClick={() => { setShowNewProd(true); setSaveError(""); }}
             className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-sm rounded-lg transition-colors">
             <Plus size={15} /> Producto
           </button>
@@ -232,16 +240,13 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
               </thead>
               <tbody>
                 {filtered.map((p, idx) => (
-                  <tr key={p.id} onClick={() => setSelectedProdId(p.id)}
+                  <tr key={p.id} onClick={() => { setSelectedProdId(p.id); setAdjustError(""); setAdjustQty(""); }}
                     className={`border-b border-slate-700/30 cursor-pointer hover:bg-slate-700/40 transition-colors group ${idx % 2 === 0 ? "" : "bg-slate-800/20"}`}>
                     <td className="py-3 px-4 font-mono text-xs text-slate-400">{p.sku}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center flex-shrink-0"><Package size={13} className="text-slate-400" /></div>
-                        <div className="min-w-0">
-                          <span className="text-slate-200 font-medium group-hover:text-amber-400 transition-colors">{p.name}</span>
-                          {p.description && <p className="text-[11px] text-slate-500 truncate max-w-xs">{p.description}</p>}
-                        </div>
+                        <span className="text-slate-200 font-medium group-hover:text-amber-400 transition-colors">{p.name}</span>
                       </div>
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell text-xs text-slate-400">{p.packQty ? `${p.packQty} und/empaque` : "—"}</td>
@@ -339,6 +344,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                   {Number(selectedProduct.packQty) > 0 && Number(adjustQty) > 0 && (
                     <p className="text-[11px] text-slate-500 mt-1.5">= {Number(adjustQty) * Number(selectedProduct.packQty)} unidades en total</p>
                   )}
+                  {adjustError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-2">{adjustError}</p>}
                 </div>
               )}
 
@@ -418,7 +424,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                   <div className="col-span-2">
                     <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
                     <p className="text-[10px] text-slate-500 mb-1">Se muestra al vender y en el comprobante</p>
-                    <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: color azul o negro" rows={2}
+                    <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: Talla M, color azul, incluye garantía de 6 meses…" rows={2}
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
                   </div>
                 </div>
@@ -508,6 +514,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                   </button>
                 </div>
               </div>
+              {saveError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-3">{saveError}</p>}
               <div className="flex gap-3 mt-5">
                 <button onClick={() => setShowNewProd(false)} className="flex-1 py-2.5 border border-slate-600 text-slate-400 rounded-xl text-sm hover:border-slate-500 transition-colors">Cancelar</button>
                 <button onClick={handleAddProduct} disabled={!newProd.name || !newProd.sku || saving}
@@ -642,6 +649,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                 </div>
               )}
 
+              {editError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-3">{editError}</p>}
               <div className="flex gap-3 mt-5">
                 <button onClick={() => setEditProd(null)} className="flex-1 py-2.5 border border-slate-600 text-slate-400 rounded-xl text-sm hover:border-slate-500 transition-colors">Cancelar</button>
                 <button onClick={handleEditSave} disabled={!editForm.name || !editForm.sku || editSaving}
