@@ -6,7 +6,7 @@ rules_version = '1';
 // Estructura real de la app (ver src/services/firestoreService.js):
 //   users/{uid}                                  → perfil (companyId, role, permissions, active)
 //   companies/{companyId}                        → datos de la empresa (name, ownerId, plan, billing)
-//   companies/{companyId}/meta/subscription      → SOLO Admin SDK (api/culqi-charge.js) puede escribir
+//   companies/{companyId}/meta/subscription      → el Dueño solo puede CREARLO (prueba gratis inicial); luego solo Admin SDK (api/culqi-charge.js, api/mercadopago-webhook.js) puede escribir
 //   companies/{companyId}/meta/invoiceCounter    → contador atómico de comprobantes
 //   companies/{companyId}/products/{id}
 //   companies/{companyId}/products/{id}/history/{id}  → log inmutable
@@ -173,12 +173,21 @@ service cloud.firestore {
 
       allow delete: if false;
 
-      // ── meta/subscription: SOLO LECTURA desde el cliente ────────────────
-      // La única escritura real la hace api/culqi-charge.js (y api/grant-
-      // access.js) con el Admin SDK, que ignora estas reglas por completo.
+      // ── meta/subscription: creación única permitida, todo lo demás NO ──
+      // El Dueño puede CREAR este documento (una sola vez, con los valores
+      // exactos de la prueba gratis) al registrar su empresa — ver el paso 3
+      // de createCompany() en services/firestore/companies.js. Cualquier
+      // cambio posterior (empezar a cobrar, renovar, marcar como vencido)
+      // ocurre siempre con el Admin SDK del backend de pagos
+      // (api/culqi-charge.js, api/mercadopago-webhook.js, api/grant-
+      // access.js), que ignora estas reglas por completo — por eso "update"
+      // queda bloqueado incluso para el propio Dueño.
       match /meta/subscription {
         allow read: if isSameCompany(companyId);
-        allow write: if false;
+        allow create: if isOwner(companyId)
+          && request.resource.data.status == 'trial'
+          && request.resource.data.plan == 'trial';
+        allow update: if false;
       }
 
       // ── meta/invoiceCounter: incremento atómico validado ────────────────

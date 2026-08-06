@@ -105,8 +105,8 @@ export default function WarehouseModule({ companyId, userName, storeProducts = [
         ))}
       </div>
 
-      {wTab === "mapa"       && <MapaTab       locations={locations} stockByLocation={stockByLocation} stockByProduct={stockByProduct} warehouseProducts={warehouseProducts} canManage={canManage} companyId={companyId} stock={stock} />}
-      {wTab === "productos"  && canManage && <ProductosTab warehouseProducts={warehouseProducts} stockByProduct={stockByProduct} locations={locations} userName={userName} companyId={companyId} />}
+      {wTab === "mapa"       && <MapaTab       locations={locations} stockByLocation={stockByLocation} stockByProduct={stockByProduct} warehouseProducts={warehouseProducts} canManage={canManage} companyId={companyId} stock={stock} currencySymbol={currencySymbol} />}
+      {wTab === "productos"  && canManage && <ProductosTab warehouseProducts={warehouseProducts} stockByProduct={stockByProduct} locations={locations} userName={userName} companyId={companyId} currencySymbol={currencySymbol} />}
       {wTab === "movimiento" && canManage && <MovimientoTab locations={locations} warehouseProducts={warehouseProducts} storeProducts={storeProducts} companyId={companyId} userName={userName} stockByProduct={stockByProduct} />}
       {wTab === "historial"  && <HistorialTab  movements={movements} />}
     </div>
@@ -114,7 +114,7 @@ export default function WarehouseModule({ companyId, userName, storeProducts = [
 }
 
 // ── Pestaña: Mapa del Almacén ─────────────────────────────────────────────────
-function MapaTab({ locations, stockByLocation, stockByProduct, warehouseProducts, canManage, companyId, stock }) {
+function MapaTab({ locations, stockByLocation, stockByProduct, warehouseProducts, canManage, companyId, stock, currencySymbol }) {
   const [showLocForm,  setShowLocForm]  = useState(false);
   const [editLoc,      setEditLoc]      = useState(null);
   const [locForm,      setLocForm]      = useState({ name: "", type: "Zona", code: "", description: "" });
@@ -383,7 +383,7 @@ function MapaTab({ locations, stockByLocation, stockByProduct, warehouseProducts
 // se crea aquí aparece automáticamente en la tienda hasta que se use
 // "Enviar a Tienda". El stock siempre se cuenta en EMPAQUES completos
 // (cajas), nunca en unidades sueltas.
-function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
+function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId, currencySymbol }) {
   const EMPTY_FORM = { name: "", sku: "", packName: "", packQty: "", unitPrice: "", locationId: "", packCount: "" };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
