@@ -5,9 +5,10 @@ import { useState } from "react";
 import {
   Mail, Lock, User, Building2, Eye, EyeOff,
   ArrowRight, RefreshCw, AlertCircle, CheckCircle,
-  ChevronLeft, Layers,
+  ChevronLeft, Layers, Globe,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { COUNTRIES } from "../config/countryConfig";
 
 // ── Ícono Google SVG ──────────────────────────────────────────────────────────
 const GoogleIcon = () => (
@@ -58,6 +59,10 @@ export default function Login() {
   const [confirmPass, setConfirmPass] = useState("");
   const [name,        setName]        = useState("");
   const [company,     setCompany]     = useState("");
+  // País de la empresa: define la moneda (soles/dólares) y la pasarela de
+  // pago (Culqi para Perú, Mercado Pago para el resto) de toda la cuenta.
+  // Ver src/config/countryConfig.js.
+  const [country,     setCountry]     = useState("PE");
   const [showPass,    setShowPass]    = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [googleLoad,  setGoogleLoad]  = useState(false);
@@ -100,7 +105,7 @@ export default function Login() {
     setLoading(true);
     try {
       if (mode === "login")    await login(email, password);
-      if (mode === "register") await register(email, password, name, company);
+      if (mode === "register") await register(email, password, name, company, country);
     } catch {}
     setLoading(false);
   }
@@ -220,6 +225,25 @@ export default function Login() {
                 </Field>
                 <Field label="Nombre de la empresa" icon={<Building2 size={14} />} error={errors.company}>
                   <Input icon value={company} onChange={e => setCompany(e.target.value)} placeholder="Ej: Distribuidora Lima SAC" error={errors.company} />
+                </Field>
+                <Field label="País de la empresa" icon={<Globe size={14} />}>
+                  <div className="relative">
+                    <Globe size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                    <select
+                      value={country}
+                      onChange={e => setCountry(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2.5 bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg text-sm text-slate-200 focus:outline-none transition-colors appearance-none"
+                    >
+                      {COUNTRIES.map(c => (
+                        <option key={c.code} value={c.code}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    {country === "PE"
+                      ? "Se te cobrará en soles (S/) a través de Culqi."
+                      : "Se te cobrará en dólares ($) a través de Mercado Pago."}
+                  </p>
                 </Field>
               </>
             )}

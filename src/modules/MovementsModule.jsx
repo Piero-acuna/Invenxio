@@ -16,11 +16,15 @@ import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner } from "../components/shared/StatusUI";
 import TransactionHistory from "../components/TransactionHistory";
 import { BarcodeScanner } from "../components/BarcodeUI";
+import { useAuth } from "../contexts/AuthContext";
+import { formatMoney } from "../utils/currency";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 2 — MOVEMENTS
 // ══════════════════════════════════════════════════════════════════════════════
 const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFinance, billing }) => {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   const [products,     loadingP] = useCollection(companyId, "products",     "name");
   const [transactions, loadingT] = useCollection(companyId, "transactions", "createdAt");
   const [warehouseMovements] = useCollection(companyId, "warehouseMovements", "createdAt");
@@ -100,6 +104,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
             partyName: clientName.trim() || "Cliente varios",
             items: cart.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
             total: cartTotal,
+            currencySymbol,
           });
         } catch (invErr) {
           console.error("Error generando comprobante:", invErr);
@@ -170,7 +175,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                         {p.description && <p className="text-xs text-slate-500 truncate mt-0.5">{p.description}</p>}
                       </div>
                       <div className="text-right mr-2">
-                        <p className="text-sm font-bold font-mono text-amber-400">S/ {(p.price || 0).toFixed(2)}</p>
+                        <p className="text-sm font-bold font-mono text-amber-400">{formatMoney(p.price, currencySymbol)}</p>
                         <StatusBadge status={p.status} />
                       </div>
                       <Plus size={16} className="text-slate-500 group-hover:text-amber-400 flex-shrink-0 transition-colors" />
@@ -192,7 +197,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                           </div>
                           <p className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 group-hover:text-amber-400 transition-colors">{p.name}</p>
                           {p.description && <p className="text-[11px] text-slate-500 leading-tight line-clamp-1 mt-0.5">{p.description}</p>}
-                          <p className="text-xs font-bold font-mono text-amber-400 mt-1.5">S/ {(p.price || 0).toFixed(2)}</p>
+                          <p className="text-xs font-bold font-mono text-amber-400 mt-1.5">{formatMoney(p.price, currencySymbol)}</p>
                           <div className="flex items-center justify-between mt-1">
                             <span className="text-xs text-slate-500 font-mono">x{p.stock}</span>
                             <Plus size={12} className="text-slate-500 group-hover:text-amber-400 transition-colors" />
@@ -223,7 +228,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                 <div key={item.id} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-slate-200 truncate">{item.name}</p>
-                    <p className="text-xs text-slate-500 font-mono">S/ {(item.price || 0).toFixed(2)} c/u</p>
+                    <p className="text-xs text-slate-500 font-mono">{formatMoney(item.price, currencySymbol)} c/u</p>
                     {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
@@ -232,7 +237,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
                     <button onClick={() => setCart(prev => prev.map(i => i.id === item.id && i.qty < i.stock ? { ...i, qty: i.qty + 1 } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Plus size={10} className="text-slate-300" /></button>
                     <button onClick={() => setCart(prev => prev.filter(i => i.id !== item.id))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
                   </div>
-                  <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">S/ {((item.price || 0) * item.qty).toFixed(2)}</span>
+                  <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">{formatMoney((item.price || 0) * item.qty, currencySymbol)}</span>
                 </div>
               ))}
             </div>
@@ -244,7 +249,7 @@ const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFin
               </div>
               <div className="flex justify-between items-center mb-4">
                 <span className="text-slate-400 text-sm">Total</span>
-                <span className="text-2xl font-bold font-mono text-amber-400">S/ {cartTotal.toFixed(2)}</span>
+                <span className="text-2xl font-bold font-mono text-amber-400">{formatMoney(cartTotal, currencySymbol)}</span>
               </div>
               {sSuccess ? (
                 <div className="space-y-2">

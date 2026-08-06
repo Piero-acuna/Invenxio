@@ -13,6 +13,8 @@ import {
   subscribeToWarehouseProducts, addWarehouseProduct, updateWarehouseProduct, deleteWarehouseProduct,
   sendWarehouseToInventory,
 } from "./services/firestoreService";
+import { useAuth } from "./contexts/AuthContext";
+import { formatMoney } from "./utils/currency";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const LOCATION_TYPES = ["Zona", "Estante", "Pasillo", "Refrigerador", "Bodega", "Otro"];
@@ -51,6 +53,8 @@ function useWarehouseData(companyId) {
 // elegir qué hay en el almacén. El almacén tiene su propio catálogo
 // (`warehouseProducts`) que se gestiona en la pestaña "Mis Productos".
 export default function WarehouseModule({ companyId, userName, storeProducts = [], canManage }) {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   const { locations, stock, movements, warehouseProducts, loading } = useWarehouseData(companyId);
   const [wTab, setWTab] = useState("mapa");   // "mapa" | "productos" | "movimiento" | "historial"
 
@@ -314,8 +318,8 @@ function MapaTab({ locations, stockByLocation, stockByProduct, warehouseProducts
                               </div>
                               {unitPrice > 0 && (
                                 <div className="flex items-center justify-between text-[11px]">
-                                  <span className="text-emerald-400/80">S/ {unitPrice.toFixed(2)} / und</span>
-                                  <span className="text-slate-600">Total: S/ {(unitPrice * totalUnits).toFixed(2)}</span>
+                                  <span className="text-emerald-400/80">{formatMoney(unitPrice, currencySymbol)} / und</span>
+                                  <span className="text-slate-600">Total: {formatMoney(unitPrice * totalUnits, currencySymbol)}</span>
                                 </div>
                               )}
                             </div>
@@ -495,7 +499,7 @@ function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, 
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
             <div className="col-span-2 sm:col-span-1">
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Precio de cada uno (S/)</label>
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Precio de cada uno ({currencySymbol})</label>
               <input type="number" min="0" step="0.01" value={form.unitPrice} onChange={e => setF("unitPrice", e.target.value)} placeholder="0.00"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
@@ -549,7 +553,7 @@ function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, 
                     <button onClick={() => handleDelete(p)} className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={12}/></button>
                   </div>
                 </div>
-                <p className="text-[11px] text-amber-400/80">📦 {p.packName} × {p.packQty} und{Number(p.unitPrice) > 0 ? ` · S/ ${Number(p.unitPrice).toFixed(2)} c/u` : ""}</p>
+                <p className="text-[11px] text-amber-400/80">📦 {p.packName} × {p.packQty} und{Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} c/u` : ""}</p>
 
                 {/* Ubicación, nombre y cantidad por ubicación */}
                 <div className="border-t border-slate-700/50 pt-2 space-y-1">

@@ -20,11 +20,16 @@ import { useCollection } from "../hooks/useCollection";
 import {
   subscribeToWarehouseProducts, subscribeToWarehouseStock, subscribeToLocations,
 } from "../services/firestoreService";
+import { useAuth } from "../contexts/AuthContext";
+import { formatMoney } from "../utils/currency";
 
-const money = (n) => `S/ ${(Number(n) || 0).toFixed(2)}`;
 const todayStr = () => new Date().toISOString().split("T")[0];
 
 export default function DashboardModule({ companyId, userName, companyName, perms, onNavigate }) {
+  // Símbolo de moneda de la empresa (S/ para Perú, $ para el resto — ver
+  // countryConfig.js). `money` reemplaza al viejo `S/ ${...}` fijo.
+  const { companyCurrency } = useAuth();
+  const money = (n) => formatMoney(n, companyCurrency.currencySymbol);
   // ── Datos de Inventario (tienda) y Movimientos ─────────────────────────────
   const [products,     loadingProd] = useCollection(companyId, "products",     "name");
   const [transactions, loadingTx]   = useCollection(companyId, "transactions", "createdAt");

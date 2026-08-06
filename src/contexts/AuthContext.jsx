@@ -34,6 +34,7 @@ import {
   updateUserPermissions,
 } from "../services/firestoreService";
 import { defaultPermissions } from "../config/permissions";
+import { getCountryConfig, LEGACY_DEFAULT_CONFIG } from "../config/countryConfig";
 
 const AuthContext    = createContext(null);
 const googleProvider = new GoogleAuthProvider();
@@ -43,6 +44,14 @@ export function AuthProvider({ children }) {
   const [userProfile, setUserProfile] = useState(null);
   const [companyId,   setCompanyId]   = useState(null);
   const [companyName, setCompanyName] = useState("");
+  // Moneda/pasarela de pago de la empresa, calculadas UNA vez a partir del
+  // país elegido al registrarse (ver countryConfig.js). Se exponen acá,
+  // globalmente, para que cualquier componente de la app (inventario,
+  // ventas, comprobantes, PaywallScreen…) pueda mostrar el símbolo correcto
+  // sin tener que ir a buscarlo cada uno por su cuenta. Empresas viejas sin
+  // estos campos guardados caen en LEGACY_DEFAULT_CONFIG (soles + Culqi),
+  // que es exactamente el comportamiento que ya tenían antes de este cambio.
+  const [companyCurrency, setCompanyCurrency] = useState(LEGACY_DEFAULT_CONFIG);
   const [loading,     setLoading]     = useState(true);
   const [authError,   setAuthError]   = useState("");
 
@@ -101,6 +110,16 @@ export function AuthProvider({ children }) {
         setCompanyId(profile.companyId);
         const company = await getCompanyProfile(profile.companyId);
         setCompanyName(company?.name || "Mi Empresa");
+        setCompanyCurrency(
+          company?.paymentGateway
+            ? {
+                country: company.country,
+                paymentGateway: company.paymentGateway,
+                currencyCode: company.currencyCode,
+                currencySymbol: company.currencySymbol,
+              }
+            : LEGACY_DEFAULT_CONFIG
+        );
       }
     } catch (err) {
       console.error("Error cargando perfil:", err);
@@ -124,6 +143,7 @@ export function AuthProvider({ children }) {
         setUserProfile(null);
         setCompanyId(null);
         setCompanyName("");
+        setCompanyCurrency(LEGACY_DEFAULT_CONFIG);
       }
       setLoading(false);
     });
@@ -152,7 +172,7 @@ export function AuthProvider({ children }) {
     }
   }
 
-  async function register(email, password, name, companyNameInput) {
+  async function register(email, password, name, companyNameInput, country = "PE") {
     setAuthError("");
     try {
       const { user } = await createUserWithEmailAndPassword(auth, email, password);
@@ -162,6 +182,7 @@ export function AuthProvider({ children }) {
         ownerUid:    user.uid,
         ownerName:   name,
         ownerEmail:  email,
+        country,
       });
       // Fijamos el perfil de inmediato (en vez de esperar a que el listener
       // onAuthStateChanged lo vuelva a leer) para que no haya ninguna ventana
@@ -169,6 +190,7 @@ export function AuthProvider({ children }) {
       setUserProfile({ id: user.uid, name, email, companyId: user.uid, role: "owner", active: true });
       setCompanyId(user.uid);
       setCompanyName(companyNameInput);
+      setCompanyCurrency(getCountryConfig(country));
     } catch (err) {
       setAuthError(friendlyError(err.code)); throw err;
     }
@@ -268,7 +290,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      currentUser, userProfile, companyId, companyName,
+      currentUser, userProfile, companyId, companyName, companyCurrency,
       loading, authError, setAuthError,
       login, loginWithGoogle, register, joinCompany, registerEmployee, logout, resetPassword,
     }}>

@@ -7,20 +7,24 @@
 // Solo el Dueño ve el botón de pago — un empleado ve un aviso pidiéndole que
 // contacte al Dueño, porque la tarjeta y la decisión de pagar son de él.
 //
-// El pago se procesa con el widget "Culqi Checkout" (carga su script solo
-// cuando esta pantalla aparece, no en el bundle principal). El token que
-// entrega Culqi NO es un pago confirmado — es solo una referencia de tarjeta
-// segura; el cobro real y la actualización de "ya pagó" ocurren en el
-// backend (api/culqi-charge.js), nunca en este componente. Ver ese archivo
-// para el porqué.
+// La pasarela de pago depende del país con el que se registró la empresa
+// (ver src/config/countryConfig.js):
+//   • Perú           → widget "Culqi Checkout" (tarjeta o Yape, en soles).
+//   • Cualquier otro → Mercado Pago Checkout Pro (redirección, en dólares).
+//
+// En ambos casos el componente NUNCA marca el pago como confirmado por su
+// cuenta — solo recibe una referencia (token de Culqi / vuelta de Mercado
+// Pago) y el cobro real + el "ya pagó" ocurre siempre en el backend
+// (api/culqi-charge.js o api/mercadopago-*.js). Ver esos archivos.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useRef } from "react";
 import { Lock, CreditCard, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { logAndGetErrorMessage } from "../utils/errors";
 
 const CULQI_SCRIPT_URL = "https://checkout.culqi.com/js/v4";
-const PLAN_AMOUNT_SOLES = 54.99; // S/ 54.99 al mes — ajusta este número a tu precio real
+const PLAN_AMOUNT_SOLES = 54.99; // S/ 54.99 al mes (Culqi/Perú) — ajusta a tu precio real
 const PLAN_AMOUNT_CENTS = PLAN_AMOUNT_SOLES * 100; // Culqi cobra en céntimos
+const PLAN_AMOUNT_USD = 14.99; // $ 14.99 al mes (Mercado Pago/resto de países) — ajusta a tu precio real
 
 function loadCulqiScript() {
   return new Promise((resolve, reject) => {
@@ -35,10 +39,32 @@ function loadCulqiScript() {
   });
 }
 
-export default function PaywallScreen({ isOwner, companyId, companyName, getIdToken, reason }) {
+export default function PaywallScreen({ isOwner, companyId, companyName, getIdToken, reason, paymentGateway = "culqi" }) {
   const [status, setStatus] = useState("idle"); // idle | loading-widget | charging | error | success
   const [errorMsg, setErrorMsg] = useState("");
   const callbackRef = useRef(null);
+
+  // Si volvemos de la redirección de Mercado Pago con un pago aprobado,
+  // mostramos "confirmando" de inmediato — el listener de suscripción en
+  // InventorySystem.jsx detecta el cambio real apenas el webhook (api/
+  // mercadopago-webhook.js) termine de escribirlo en Firestore, y esta
+  // pantalla desaparece sola.
+  useEffect(() => {
+    if (paymentGateway !== "mercadopago") return;
+    const params = new URLSearchParams(window.location.search);
+    const mpStatus = params.get("status") || params.get("collection_status");
+    if (mpStatus === "approved") {
+      setStatus("charging");
+    } else if (mpStatus === "failure" || mpStatus === "rejected") {
+      setStatus("error");
+      setErrorMsg("El pago no se completó. Intenta de nuevo.");
+    }
+    if (mpStatus) {
+      // Limpiamos los query params de vuelta de Mercado Pago de la URL para
+      // que un refresh de la página no vuelva a leerlos.
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [paymentGateway]);
 
   // Culqi Checkout llama a una función global window.culqi() cuando el
   // usuario termina de llenar el formulario de tarjeta — la registramos acá
@@ -55,6 +81,31 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
     };
     return () => { delete window.culqi; };
   }, []);
+
+  // ── Mercado Pago (Checkout Pro): pide al backend una "preferencia" de
+  // pago y redirige al usuario a la pasarela alojada por Mercado Pago. El
+  // usuario paga ahí, no en esta pantalla — al terminar, Mercado Pago lo
+  // trae de vuelta a esta misma URL.
+  async function handlePayMercadoPago() {
+    setErrorMsg("");
+    setStatus("loading-widget");
+    try {
+      const idToken = await getIdToken();
+      const res = await fetch("/api/mercadopago-preference", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ companyId, returnUrl: window.location.href }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok || !data.initPoint) {
+        throw new Error(data.error || "No se pudo iniciar el pago con Mercado Pago.");
+      }
+      window.location.href = data.initPoint; // redirección a Mercado Pago
+    } catch (e) {
+      setStatus("error");
+      setErrorMsg(logAndGetErrorMessage(e, "Error al iniciar pago con Mercado Pago:", "No se pudo iniciar el pago. Intenta de nuevo."));
+    }
+  }
 
   async function handlePay() {
     setErrorMsg("");
@@ -129,20 +180,23 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
 
       {isOwner && (
         <>
-          {status === "success" ? (
+          {status === "success" || status === "charging" ? (
             <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
-              <CheckCircle2 size={18} />¡Pago confirmado! Actualizando acceso…
+              {status === "charging" ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+              {status === "charging" ? "Confirmando pago…" : "¡Pago confirmado! Actualizando acceso…"}
             </div>
           ) : (
             <button
-              onClick={handlePay}
-              disabled={status === "loading-widget" || status === "charging"}
+              onClick={paymentGateway === "mercadopago" ? handlePayMercadoPago : handlePay}
+              disabled={status === "loading-widget"}
               className="flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 disabled:cursor-wait text-slate-900 font-bold text-sm rounded-xl transition-colors shadow-lg shadow-amber-500/20"
             >
-              {status === "loading-widget" || status === "charging"
+              {status === "loading-widget"
                 ? <Loader2 size={16} className="animate-spin" />
                 : <CreditCard size={16} />}
-              {status === "charging" ? "Confirmando pago…" : `Pagar S/ ${PLAN_AMOUNT_SOLES}.00 / mes`}
+              {paymentGateway === "mercadopago"
+                ? `Pagar $ ${PLAN_AMOUNT_USD} / mes`
+                : `Pagar S/ ${PLAN_AMOUNT_SOLES}.00 / mes`}
             </button>
           )}
           {errorMsg && (
@@ -150,7 +204,11 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
               <AlertCircle size={13} className="flex-shrink-0" />{errorMsg}
             </div>
           )}
-          <p className="text-[11px] text-slate-600 mt-4">Pago seguro procesado por Culqi · tarjeta o Yape</p>
+          <p className="text-[11px] text-slate-600 mt-4">
+            {paymentGateway === "mercadopago"
+              ? "Pago seguro procesado por Mercado Pago"
+              : "Pago seguro procesado por Culqi · tarjeta o Yape"}
+          </p>
         </>
       )}
     </div>

@@ -27,11 +27,15 @@ import SupplierSaleTab from "../components/suppliers/SupplierSaleTab";
 import SupplierPurchaseTab from "../components/suppliers/SupplierPurchaseTab";
 import SupplierDetailModal from "../components/suppliers/SupplierDetailModal";
 import SupplierFormModal from "../components/suppliers/SupplierFormModal";
+import { useAuth } from "../contexts/AuthContext";
+import { formatMoney } from "../utils/currency";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 3 — SUPPLIERS
 // ══════════════════════════════════════════════════════════════════════════════
 const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, canViewFinance, billing }) => {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   const [suppliers,     loadingSup] = useCollection(companyId, "suppliers",     "name");
   const [supplierSales, loadingSS]  = useCollection(companyId, "supplierSales", "createdAt");
   const [transactions]              = useCollection(companyId, "transactions",  "createdAt");
@@ -105,9 +109,9 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
 
       if (storedCost === null) {
         await updateWarehouseProduct(companyId, pForm.product.id, { cost });
-        msg = `Costo de referencia registrado: S/ ${cost.toFixed(2)} por ${pForm.product.packName}.`;
+        msg = `Costo de referencia registrado: ${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}.`;
       } else if (Math.round(storedCost * 100) !== Math.round(cost * 100)) {
-        const newName = `${pForm.product.name} (S/ ${cost.toFixed(2)})`;
+        const newName = `${pForm.product.name} (${formatMoney(cost, currencySymbol)})`;
         const newRef  = await addWarehouseProduct(companyId, {
           name: newName,
           sku: pForm.product.sku || "",
@@ -118,9 +122,9 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
           cost,
         });
         targetProduct = { id: newRef.id, name: newName, sku: pForm.product.sku, description: pForm.product.description, packName: pForm.product.packName, packQty: pForm.product.packQty };
-        msg = `⚠️ El costo ingresado (S/ ${cost.toFixed(2)}) no coincide con el registrado para "${pForm.product.name}" (S/ ${storedCost.toFixed(2)}). Se creó un nuevo producto de almacén: "${newName}" y la compra se registró ahí.`;
+        msg = `⚠️ El costo ingresado (${formatMoney(cost, currencySymbol)}) no coincide con el registrado para "${pForm.product.name}" (${formatMoney(storedCost, currencySymbol)}). Se creó un nuevo producto de almacén: "${newName}" y la compra se registró ahí.`;
       } else {
-        msg = `✅ El costo coincide con el registrado (S/ ${cost.toFixed(2)} por ${pForm.product.packName}).`;
+        msg = `✅ El costo coincide con el registrado (${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}).`;
       }
 
       const total = await recordWarehousePurchase(companyId, {
@@ -260,6 +264,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
       generateInvoicePDF({
         billing, docType: "PROVEEDOR", partyLabel: "Proveedor",
         partyName: partyName || "—", items, total, note: note || "", invoiceNumber,
+        currencySymbol,
       });
     } catch (err) {
       setInvoiceMsgSupplier(logAndGetErrorMessage(err, "Error al generar comprobante:", "Ocurrió un error al generar el comprobante."));
@@ -307,8 +312,8 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
         "Estado":    sale.status || "",
       };
       if (canViewFinance) {
-        base["Precio Unitario (S/)"] = Number((sale.unitPrice ?? 0).toFixed(2));
-        base["Total (S/)"]           = Number((sale.total ?? 0).toFixed(2));
+        base[`Precio Unitario (${currencySymbol})`] = Number((sale.unitPrice ?? 0).toFixed(2));
+        base[`Total (${currencySymbol})`]           = Number((sale.total ?? 0).toFixed(2));
       }
       return base;
     });

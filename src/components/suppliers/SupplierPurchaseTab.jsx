@@ -9,12 +9,16 @@ import {
   X, Package, AlertTriangle, CheckCircle, ArrowUpCircle, Calendar,
   Loader2, Truck, History,
 } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
+import { formatMoney } from "../../utils/currency";
 
 export default function SupplierPurchaseTab({
   suppliers, warehouseLocations, stockByProduct,
   pForm, setPForm, pSaving, pSuccess, pError, pMsg, pFiltered,
   onSubmit, canManageSuppliers, canViewFinance, warehousePurchases,
 }) {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
@@ -59,7 +63,7 @@ export default function SupplierPurchaseTab({
                 {pForm.product && (
                   <p className="text-[11px] text-slate-500 mt-1.5">
                     {pForm.product.cost != null
-                      ? <>Costo registrado: <span className="text-amber-400 font-mono">S/ {Number(pForm.product.cost).toFixed(2)}</span> por {pForm.product.packName}. Si ingresas un costo distinto, se creará un producto nuevo.</>
+                      ? <>Costo registrado: <span className="text-amber-400 font-mono">{formatMoney(pForm.product.cost, currencySymbol)}</span> por {pForm.product.packName}. Si ingresas un costo distinto, se creará un producto nuevo.</>
                       : "Sin costo registrado todavía — el que ingreses ahora quedará como referencia."}
                   </p>
                 )}
@@ -102,7 +106,7 @@ export default function SupplierPurchaseTab({
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
               </div>
               <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Costo por {pForm.product?.packName || "empaque"} (S/) *</label>
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Costo por {pForm.product?.packName || "empaque"} ({currencySymbol}) *</label>
                 <input type="number" value={pForm.unitCost} onChange={e => setPForm(p => ({ ...p, unitCost: e.target.value }))} min="0" placeholder="0.00"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
               </div>
@@ -115,7 +119,7 @@ export default function SupplierPurchaseTab({
             {pForm.packCount && pForm.unitCost && (
               <div className="flex justify-between items-center p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
                 <span className="text-sm text-amber-400 font-semibold">Total (costo registrado)</span>
-                <span className="text-lg font-bold font-mono text-amber-400">S/ {(Number(pForm.packCount || 0) * Number(pForm.unitCost || 0)).toFixed(2)}</span>
+                <span className="text-lg font-bold font-mono text-amber-400">{formatMoney(Number(pForm.packCount || 0) * Number(pForm.unitCost || 0), currencySymbol)}</span>
               </div>
             )}
             {pSuccess ? (
@@ -143,7 +147,7 @@ export default function SupplierPurchaseTab({
               <div key={t.id} className="p-3 bg-slate-900/40 border border-slate-700/40 rounded-xl">
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <p className="text-sm font-semibold text-slate-200 truncate">{t.product}</p>
-                  {canViewFinance && <span className="font-bold font-mono text-red-400 flex-shrink-0">- S/ {(t.total || 0).toFixed(2)}</span>}
+                  {canViewFinance && <span className="font-bold font-mono text-red-400 flex-shrink-0">- {formatMoney(t.total, currencySymbol)}</span>}
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500">
                   <span className="flex items-center gap-1"><Calendar size={10} />{t.date}{t.time ? ` · ${t.time}` : ""}</span>

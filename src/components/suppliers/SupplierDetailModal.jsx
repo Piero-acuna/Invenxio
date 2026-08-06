@@ -9,6 +9,8 @@ import {
   X, Users, Phone, MapPin, FileText, Send, Truck, Calendar, AlertTriangle,
 } from "lucide-react";
 import { StatusBadge } from "../shared/StatusUI";
+import { useAuth } from "../../contexts/AuthContext";
+import { formatMoney } from "../../utils/currency";
 
 export default function SupplierDetailModal({
   supplier, onClose,
@@ -17,6 +19,8 @@ export default function SupplierDetailModal({
   canViewFinance, canManageSuppliers,
   invoiceMsgSupplier, onMarkDelivered, onCancelSale, onGoToPurchaseTab,
 }) {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   if (!supplier) return null;
 
   return (
@@ -37,7 +41,7 @@ export default function SupplierDetailModal({
         <div className="grid grid-cols-3 gap-2 px-4 sm:px-5 pt-4 flex-shrink-0">
           {[
             { label: "Ventas", value: supplierSalesHistory.length },
-            ...(canViewFinance ? [{ label: "Total Vendido", value: `S/ ${totalVendido.toFixed(2)}` }] : []),
+            ...(canViewFinance ? [{ label: "Total Vendido", value: `${formatMoney(totalVendido, currencySymbol)}` }] : []),
             { label: "Órdenes", value: supplierOrders.length },
           ].map((s, i) => (
             <div key={i} className="bg-slate-800 rounded-xl p-2.5 text-center border border-slate-700/50">
@@ -86,7 +90,7 @@ export default function SupplierDetailModal({
                   <div className="flex items-center justify-between text-xs text-slate-500">
                     <span className="flex items-center gap-1"><Calendar size={10}/>{sale.date}{sale.time ? ` · ${sale.time}` : ""}</span>
                     <span>x{sale.qty} {sale.packName || ""}</span>
-                    {canViewFinance && <span className="font-bold font-mono text-emerald-400">+ S/ {(sale.total || 0).toFixed(2)}</span>}
+                    {canViewFinance && <span className="font-bold font-mono text-emerald-400">+ {formatMoney(sale.total, currencySymbol)}</span>}
                   </div>
                   {sale.description && <p className="text-xs text-slate-500 mt-1">{sale.description}</p>}
                   {sale.note && <p className="text-xs text-slate-500 mt-1 italic">{sale.note}</p>}
@@ -135,10 +139,10 @@ export default function SupplierDetailModal({
                     <div className="flex items-center justify-between mt-2 text-xs">
                       <span className="text-slate-400">
                         {order.qty} und
-                        {canViewFinance && ` × S/ ${(order.unitCost || 0).toFixed(2)}`}
+                        {canViewFinance && ` × ${formatMoney(order.unitCost, currencySymbol)}`}
                       </span>
                       {canViewFinance && (
-                        <span className="font-bold font-mono text-amber-400">S/ {(order.total || 0).toFixed(2)}</span>
+                        <span className="font-bold font-mono text-amber-400">{formatMoney(order.total, currencySymbol)}</span>
                       )}
                     </div>
                     {order.description && <p className="text-xs text-slate-500 mt-1">{order.description}</p>}

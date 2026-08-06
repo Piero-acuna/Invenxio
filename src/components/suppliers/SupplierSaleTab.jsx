@@ -10,6 +10,8 @@ import {
   Loader2, Receipt, TrendingUp, Clock, FileSpreadsheet,
 } from "lucide-react";
 import { StatusBadge, Spinner } from "../shared/StatusUI";
+import { useAuth } from "../../contexts/AuthContext";
+import { formatMoney } from "../../utils/currency";
 
 export default function SupplierSaleTab({
   suppliers, warehouseLocations, stockByProduct,
@@ -18,12 +20,14 @@ export default function SupplierSaleTab({
   supplierSales, loadingSS, totalSales, pendingCnt, deliveredCnt, cancelledCnt,
   invoiceMsgSupplier, onMarkDelivered, onCancelSale, onExport,
 }) {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: "Total Ventas", value: supplierSales.length,          color: "text-blue-400",  icon: <Receipt size={16} /> },
-          ...(canViewFinance ? [{ label: "Monto Total", value: `S/ ${totalSales.toFixed(2)}`, color: "text-amber-400", icon: <TrendingUp size={16} /> }] : []),
+          ...(canViewFinance ? [{ label: "Monto Total", value: `${formatMoney(totalSales, currencySymbol)}`, color: "text-amber-400", icon: <TrendingUp size={16} /> }] : []),
           { label: "Pendientes",   value: pendingCnt,                    color: "text-amber-400", icon: <Clock size={16} /> },
         ].map((s, i) => (
           <div key={i} className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-4 flex items-center gap-3">
@@ -108,7 +112,7 @@ export default function SupplierSaleTab({
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
               </div>
               <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Precio por {ssForm.product?.packName || "empaque"} (S/) *</label>
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Precio por {ssForm.product?.packName || "empaque"} ({currencySymbol}) *</label>
                 <input type="number" value={ssForm.unitPrice} onChange={e => setSsForm(p => ({ ...p, unitPrice: e.target.value }))} min="0" placeholder="0.00"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
               </div>
@@ -124,7 +128,7 @@ export default function SupplierSaleTab({
               <div>
                 <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Total</label>
                 <div className="px-3 py-2.5 bg-slate-700/50 border border-amber-500/30 rounded-lg text-sm font-mono font-bold text-amber-400">
-                  S/ {(Number(ssForm.qty || 0) * Number(ssForm.unitPrice || 0)).toFixed(2)}
+                  {formatMoney(Number(ssForm.qty || 0) * Number(ssForm.unitPrice || 0), currencySymbol)}
                 </div>
               </div>
             </div>
@@ -206,9 +210,9 @@ export default function SupplierSaleTab({
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-3 text-slate-500">
                     <span className="flex items-center gap-1"><Calendar size={10} />{sale.date}</span>
-                    <span className="flex items-center gap-1"><Tag size={10} />x{sale.qty} {sale.packName || ""}{canViewFinance ? ` · S/${sale.unitPrice}` : ""}</span>
+                    <span className="flex items-center gap-1"><Tag size={10} />x{sale.qty} {sale.packName || ""}{canViewFinance ? ` · ${formatMoney(sale.unitPrice, currencySymbol)}` : ""}</span>
                   </div>
-                  {canViewFinance && <span className="font-bold font-mono text-emerald-400">+ S/ {(sale.total || 0).toFixed(2)}</span>}
+                  {canViewFinance && <span className="font-bold font-mono text-emerald-400">+ {formatMoney(sale.total, currencySymbol)}</span>}
                 </div>
                 {sale.description && <p className="text-xs text-slate-500 mt-1">{sale.description}</p>}
                 {sale.note && <p className="text-xs text-slate-500 mt-1 italic">{sale.note}</p>}

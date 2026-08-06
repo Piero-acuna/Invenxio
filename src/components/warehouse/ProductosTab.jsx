@@ -19,8 +19,12 @@ import {
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
+import { useAuth } from "../../contexts/AuthContext";
+import { formatMoney } from "../../utils/currency";
 
 export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", packQty: "", unitPrice: "", locationId: "", packCount: "" };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -137,7 +141,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
             <div className="col-span-2 sm:col-span-1">
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Precio de cada uno (S/)</label>
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Precio de cada uno ({currencySymbol})</label>
               <input type="number" min="0" step="0.01" value={form.unitPrice} onChange={e => setF("unitPrice", e.target.value)} placeholder="0.00"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
@@ -197,7 +201,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
                     <button onClick={() => handleDelete(p)} className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={12}/></button>
                   </div>
                 </div>
-                <p className="text-[11px] text-amber-400/80">📦 {p.packName} × {p.packQty} und{Number(p.unitPrice) > 0 ? ` · S/ ${Number(p.unitPrice).toFixed(2)} c/u` : ""}</p>
+                <p className="text-[11px] text-amber-400/80">📦 {p.packName} × {p.packQty} und{Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} c/u` : ""}</p>
                 {p.description && <p className="text-[11px] text-slate-500 line-clamp-2">{p.description}</p>}
 
                 {/* Ubicación, nombre y cantidad por ubicación */}

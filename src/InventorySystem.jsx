@@ -60,7 +60,7 @@ function ModuleLoader() {
 }
 
 export default function InventoryApp() {
-  const { currentUser, userProfile, companyName, logout, registerEmployee } = useAuth();
+  const { currentUser, userProfile, companyName, companyCurrency, logout, registerEmployee } = useAuth();
   const companyId = userProfile?.companyId;
   const userName  = userProfile?.name || currentUser?.email || "Usuario";
   const isOwner   = userProfile?.role === "owner";
@@ -233,6 +233,7 @@ export default function InventoryApp() {
             companyName={companyName}
             getIdToken={() => currentUser.getIdToken()}
             reason={blockReason}
+            paymentGateway={companyCurrency.paymentGateway}
           />
         ) : visibleTabs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-slate-500 gap-2">

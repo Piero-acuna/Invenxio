@@ -9,6 +9,7 @@
 //   users/{uid}                                   ← perfil (companyId, role)
 // ─────────────────────────────────────────────────────────────────────────────
 import { doc, getDoc, setDoc, onSnapshot, updateDoc, serverTimestamp, runTransaction, db, companyRef } from "./shared";
+import { getCountryConfig } from "../../config/countryConfig";
 
 // Duración de la prueba gratis para toda empresa nueva. Un solo número acá
 // controla todo el sistema — cambialo si quieres 7, 14, 30 días, etc.
@@ -17,8 +18,16 @@ export const TRIAL_DAYS = 14;
 /**
  * Crea el documento de la empresa y el perfil del usuario fundador.
  * Se llama una única vez al registrar el primer usuario.
+ *
+ * `country` (código ISO, ej. "PE", "MX", o "OTHER" si no se especificó —
+ * como en el registro con Google, que no pide país) determina de una vez
+ * por todas la moneda y la pasarela de pago de la empresa: Perú usa
+ * Culqi + soles (PEN), cualquier otro país usa Mercado Pago + dólares
+ * (USD). Ver src/config/countryConfig.js.
  */
-export async function createCompany({ companyName, ownerUid, ownerName, ownerEmail }) {
+export async function createCompany({ companyName, ownerUid, ownerName, ownerEmail, country = "PE" }) {
+  const { paymentGateway, currencyCode, currencySymbol } = getCountryConfig(country);
+
   // 1. Crear documento de la empresa
   const cRef = companyRef(ownerUid); // usamos uid como companyId para simplicidad
   await setDoc(cRef, {
@@ -26,6 +35,10 @@ export async function createCompany({ companyName, ownerUid, ownerName, ownerEma
     createdAt: serverTimestamp(),
     ownerId:   ownerUid,
     plan:      "free",
+    country,
+    paymentGateway,
+    currencyCode,
+    currencySymbol,
   });
 
   // 2. Perfil del usuario → referencia a la empresa
@@ -48,6 +61,11 @@ export async function createCompany({ companyName, ownerUid, ownerName, ownerEma
     plan:   "trial",
     trialEndsAt: trialEndsAt.toISOString(),
     createdAt: serverTimestamp(),
+    // Copiados acá también (además de en el doc raíz de la empresa) para que
+    // el backend de cobro (api/culqi-charge.js o api/mercadopago-*.js) sepa
+    // qué pasarela/moneda usar sin tener que leer otro documento aparte.
+    paymentGateway,
+    currencyCode,
   });
 
   return ownerUid; // retorna el companyId

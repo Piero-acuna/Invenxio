@@ -18,11 +18,15 @@ import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
 import { BarcodeDisplay } from "../components/BarcodeUI";
 import { generateBarcode } from "../lib/barcode";
+import { useAuth } from "../contexts/AuthContext";
+import { formatMoney } from "../utils/currency";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 1 — INVENTORY
 // ══════════════════════════════════════════════════════════════════════════════
 const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, canViewFinance }) => {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   const [products, loadingP] = useCollection(companyId, "products", "name");
   const [suppliers]          = useCollection(companyId, "suppliers", "name");
 
@@ -253,7 +257,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                     <td className="py-3 px-4 text-right font-mono font-bold">
                       <span className={p.stock === 0 ? "text-red-400" : p.stock <= p.minStock ? "text-amber-400" : "text-emerald-400"}>{p.stock}</span>
                     </td>
-                    <td className="py-3 px-4 text-right font-mono text-slate-300 hidden sm:table-cell">S/ {(p.price || 0).toFixed(2)}</td>
+                    <td className="py-3 px-4 text-right font-mono text-slate-300 hidden sm:table-cell">{formatMoney(p.price, currencySymbol)}</td>
                     <td className="py-3 px-4 text-center"><StatusBadge status={p.status} /></td>
                     <td className="py-3 px-4 text-center">
                       {canEdit && (
@@ -304,8 +308,8 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                 {[
                   { label: "Stock Actual",  value: selectedProduct.stock,                        mono: true,  color: selectedProduct.stock === 0 ? "text-red-400" : selectedProduct.stock <= selectedProduct.minStock ? "text-amber-400" : "text-emerald-400" },
                   { label: "Stock Mínimo",  value: selectedProduct.minStock,                     mono: true,  color: "text-slate-300" },
-                  { label: "Costo de Venta", value: `S/ ${(selectedProduct.price || 0).toFixed(2)}`, mono: true, color: "text-slate-300" },
-                  ...(canViewFinance ? [{ label: "Costo de Compra", value: `S/ ${(selectedProduct.cost || 0).toFixed(2)}`, mono: true, color: "text-slate-300" }] : []),
+                  { label: "Costo de Venta", value: `${formatMoney(selectedProduct.price, currencySymbol)}`, mono: true, color: "text-slate-300" },
+                  ...(canViewFinance ? [{ label: "Costo de Compra", value: `${formatMoney(selectedProduct.cost, currencySymbol)}`, mono: true, color: "text-slate-300" }] : []),
                   { label: "Unid. por Empaque", value: selectedProduct.packQty || "—",            mono: true, color: "text-slate-300" },
                   ...(selectedProduct.packQty > 0 ? [{ label: "Empaques Disponibles", value: `≈ ${Math.floor(selectedProduct.stock / selectedProduct.packQty)}`, mono: true, color: "text-amber-400" }] : []),
                 ].map((item, i) => (
@@ -436,13 +440,13 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider">Precios</p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta (S/)</label>
+                      <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
                       <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente</p>
                       <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
                         className="w-full px-3 py-2 bg-slate-900 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
                     </div>
                     <div>
-                      <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra (S/)</label>
+                      <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
                       <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor</p>
                       <input type="number" min="0" step="0.01" value={newProd.cost} onChange={e => setNewProd(p => ({ ...p, cost: e.target.value }))} placeholder="0.00"
                         className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 transition-colors" />
@@ -456,7 +460,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                       <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
                         <span className="text-slate-400">Ganancia por unidad</span>
                         <div className="text-right">
-                          <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>S/ {profit.toFixed(2)}</span>
+                          <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>{formatMoney(profit, currencySymbol)}</span>
                           <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>
                         </div>
                       </div>
@@ -470,7 +474,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Precio</p>
                   <div>
-                    <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta (S/)</label>
+                    <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
                     <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente por unidad</p>
                     <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
                       className="w-full px-3 py-2 bg-slate-800 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
@@ -574,13 +578,13 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider">Precios</p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta (S/)</label>
+                      <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
                       <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente</p>
                       <input type="number" min="0" step="0.01" value={editForm.price} onChange={e => setEditForm(p => ({ ...p, price: e.target.value }))}
                         className="w-full px-3 py-2 bg-slate-900 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 transition-colors" />
                     </div>
                     <div>
-                      <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra (S/)</label>
+                      <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
                       <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor</p>
                       <input type="number" min="0" step="0.01" value={editForm.cost} onChange={e => setEditForm(p => ({ ...p, cost: e.target.value }))}
                         className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono focus:outline-none focus:border-sky-500 transition-colors" />
@@ -593,7 +597,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                       <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
                         <span className="text-slate-400">Ganancia por unidad</span>
                         <div className="text-right">
-                          <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>S/ {profit.toFixed(2)}</span>
+                          <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>{formatMoney(profit, currencySymbol)}</span>
                           <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>
                         </div>
                       </div>
@@ -604,7 +608,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
 
               {!canViewFinance && (
                 <div>
-                  <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta (S/)</label>
+                  <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
                   <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente por unidad</p>
                   <input type="number" min="0" step="0.01" value={editForm.price} onChange={e => setEditForm(p => ({ ...p, price: e.target.value }))}
                     className="w-full px-3 py-2 bg-slate-800 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 transition-colors" />

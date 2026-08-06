@@ -17,9 +17,13 @@ import { getNextInvoiceNumber } from "../services/firestoreService";
 import { exportToExcel } from "../utils/exportExcel";
 import { generateInvoicePDF } from "../utils/generateInvoicePDF";
 import { Spinner } from "./shared/StatusUI";
+import { useAuth } from "../contexts/AuthContext";
+import { formatMoney } from "../utils/currency";
 
 // ─── HISTORY TABLE ────────────────────────────────────────────────────────────
 const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements = [], supplierSales = [], loading, canViewFinance, canPurchase, canSell, billing, companyId }) => {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   const [search, setSearch] = useState("");
   const [sourceF, setSourceF] = useState("all"); // "all" | "inventario" | "almacen" | "proveedores"
   const [chartPeriod, setChartPeriod] = useState("monthly"); // "monthly" | "weekly"
@@ -212,7 +216,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         "Cantidad":           t.qty ?? "",
       };
       if (canViewFinance && t.amount != null) {
-        base["Total (S/)"] = Number(t.amount.toFixed(2));
+        base[`Total (${currencySymbol})`] = Number(t.amount.toFixed(2));
       }
       base["Proveedor / Cliente / Detalle"] = t.party || "—";
       base["Nota"] = t.note || "";
@@ -247,6 +251,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         total:       t.amount ?? 0,
         invoiceNumber,
         note:        t.note || "",
+        currencySymbol,
       });
     } catch (err) {
       console.error("Error al generar comprobante:", err);
@@ -264,7 +269,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
             <div className="w-2 h-2 rounded-full" style={{ background: entry.color }} />
             <span className="text-slate-400">{entry.name}:</span>
             <span className="font-bold font-mono" style={{ color: entry.color }}>
-              {entry.name === "Margen %" ? `${entry.value.toFixed(1)}%` : `S/ ${entry.value.toFixed(2)}`}
+              {entry.name === "Margen %" ? `${entry.value.toFixed(1)}%` : `${formatMoney(entry.value, currencySymbol)}`}
             </span>
           </div>
         ))}
@@ -283,7 +288,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
           {[
             {
               label: "Total Ingresos",
-              value: `S/ ${totalVentas.toFixed(2)}`,
+              value: `${formatMoney(totalVentas, currencySymbol)}`,
               sub: `${transactions.filter(t=>t.type==="venta").length} ventas`,
               color: "text-emerald-400",
               bg: "bg-emerald-500/10 border-emerald-500/20",
@@ -291,7 +296,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
             },
             {
               label: "Total Egresos",
-              value: `S/ ${totalCompras.toFixed(2)}`,
+              value: `${formatMoney(totalCompras, currencySymbol)}`,
               sub: `${transactions.filter(t=>t.type==="compra").length} compras`,
               color: "text-blue-400",
               bg: "bg-blue-500/10 border-blue-500/20",
@@ -299,7 +304,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
             },
             {
               label: "Ganancia Bruta",
-              value: `S/ ${gananciaBruta.toFixed(2)}`,
+              value: `${formatMoney(gananciaBruta, currencySymbol)}`,
               sub: gananciaBruta >= 0 ? "Positivo ✓" : "Negativo ✗",
               color: gananciaBruta >= 0 ? "text-amber-400" : "text-red-400",
               bg: gananciaBruta >= 0 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20",
@@ -352,7 +357,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false}
-                  tickFormatter={v => `S/${v >= 1000 ? (v/1000).toFixed(1)+"k" : v}`} width={52} />
+                  tickFormatter={v => `${currencySymbol}${v >= 1000 ? (v/1000).toFixed(1)+"k" : v}`} width={52} />
                 <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8", paddingTop: 12 }} />
                 <Bar dataKey="ingresos" name="Ingresos"  fill="#34d399" radius={[4,4,0,0]} />
@@ -463,7 +468,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-300">{t.qty}{t.unit ? <span className="text-slate-500 font-normal"> {t.unit}</span> : ""}</td>
                       {canViewFinance && (
                         <td className={`py-2.5 px-3 text-right font-mono font-bold ${t.amount == null ? "text-slate-600" : t.type === "compra" ? "text-red-400" : "text-emerald-400"}`}>
-                          {t.amount != null ? `${t.type === "compra" ? "-" : "+"} S/ ${t.amount.toFixed(2)}` : "—"}
+                          {t.amount != null ? `${t.type === "compra" ? "-" : "+"} ${formatMoney(t.amount, currencySymbol)}` : "—"}
                         </td>
                       )}
                       <td className="py-2.5 px-3 hidden md:table-cell text-slate-400">{t.party}</td>

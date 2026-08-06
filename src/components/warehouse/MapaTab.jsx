@@ -13,8 +13,12 @@ import { addLocation, updateLocation, deleteLocation } from "../../services/fire
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { EmptyState } from "../shared/StatusUI";
 import { LOCATION_TYPES } from "./constants";
+import { useAuth } from "../../contexts/AuthContext";
+import { formatMoney } from "../../utils/currency";
 
 export default function MapaTab({ locations, stockByLocation, stockByProduct, warehouseProducts, canManage, companyId }) {
+  const { companyCurrency } = useAuth();
+  const currencySymbol = companyCurrency.currencySymbol;
   const [showLocForm,  setShowLocForm]  = useState(false);
   const [editLoc,      setEditLoc]      = useState(null);
   const [locForm,      setLocForm]      = useState({ name: "", type: "Zona", code: "", description: "" });
@@ -218,8 +222,8 @@ export default function MapaTab({ locations, stockByLocation, stockByProduct, wa
                               </div>
                               {unitPrice > 0 && (
                                 <div className="flex items-center justify-between text-[11px]">
-                                  <span className="text-emerald-400/80">S/ {unitPrice.toFixed(2)} / und</span>
-                                  <span className="text-slate-600">Total: S/ {(unitPrice * totalUnits).toFixed(2)}</span>
+                                  <span className="text-emerald-400/80">{formatMoney(unitPrice, currencySymbol)} / und</span>
+                                  <span className="text-slate-600">Total: {formatMoney(unitPrice * totalUnits, currencySymbol)}</span>
                                 </div>
                               )}
                             </div>

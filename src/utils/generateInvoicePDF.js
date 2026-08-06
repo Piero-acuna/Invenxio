@@ -30,8 +30,8 @@ const COLOR = {
   white: [255, 255, 255],
 };
 
-function fmtMoney(n) {
-  return `S/ ${Number(n || 0).toFixed(2)}`;
+function fmtMoney(n, symbol = "S/") {
+  return `${symbol} ${Number(n || 0).toFixed(2)}`;
 }
 
 function setFill(pdf, c) { pdf.setFillColor(c[0], c[1], c[2]); }
@@ -48,11 +48,12 @@ function setText(pdf, c) { pdf.setTextColor(c[0], c[1], c[2]); }
  * @param {number} params.total          Total general
  * @param {number} params.invoiceNumber  Correlativo numérico
  * @param {string} [params.note]         Nota / observación opcional
+ * @param {string} [params.currencySymbol] Símbolo de moneda ("S/" o "$") — según el país de la empresa
  * @returns {boolean} true si se generó y descargó correctamente
  */
 export function generateInvoicePDF({
   billing, docType = "VENTA", partyLabel = "Cliente", partyName = "",
-  items = [], total = 0, invoiceNumber, note = "",
+  items = [], total = 0, invoiceNumber, note = "", currencySymbol = "S/",
 }) {
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
   const pageW = 210;
@@ -185,10 +186,10 @@ export function generateInvoicePDF({
     pdf.text(String(it.name || "").slice(0, 48), colProd, y + 5.1);
     setText(pdf, COLOR.sub);
     pdf.text(String(it.qty ?? ""), colQty, y + 5.1, { align: "right" });
-    pdf.text(fmtMoney(it.unitPrice), colUnit, y + 5.1, { align: "right" });
+    pdf.text(fmtMoney(it.unitPrice, currencySymbol), colUnit, y + 5.1, { align: "right" });
     setText(pdf, COLOR.ink);
     pdf.setFont("helvetica", "bold");
-    pdf.text(fmtMoney(it.total), colTotal, y + 5.1, { align: "right" });
+    pdf.text(fmtMoney(it.total, currencySymbol), colTotal, y + 5.1, { align: "right" });
     pdf.setFont("helvetica", "normal");
     y += rowH;
   });
@@ -209,7 +210,7 @@ export function generateInvoicePDF({
   pdf.setFontSize(9.5);
   pdf.text("TOTAL", totalBoxX + 6, y + 8.3);
   pdf.setFontSize(13);
-  pdf.text(fmtMoney(total), rightX - 5, y + 8.6, { align: "right" });
+  pdf.text(fmtMoney(total, currencySymbol), rightX - 5, y + 8.6, { align: "right" });
   y += totalBoxH + 10;
 
   if (note) {
