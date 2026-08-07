@@ -20,6 +20,7 @@ import { BarcodeDisplay } from "../components/BarcodeUI";
 import { generateBarcode } from "../lib/barcode";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
+import { calcProfit, calcMarginPercent } from "../utils/finance";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 1 — INVENTORY
@@ -452,10 +453,10 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                         className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 transition-colors" />
                     </div>
                   </div>
-                  {/* Margen calculado en tiempo real */}
+                  {/* Margen calculado en tiempo real (ver src/utils/finance.js) */}
                   {newProd.price > 0 && newProd.cost > 0 && (() => {
-                    const margin = ((newProd.price - newProd.cost) / newProd.price * 100);
-                    const profit = newProd.price - newProd.cost;
+                    const profit = calcProfit(newProd.price, newProd.cost);
+                    const margin = calcMarginPercent(newProd.price, newProd.cost);
                     return (
                       <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
                         <span className="text-slate-400">Ganancia por unidad</span>
@@ -591,8 +592,8 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                     </div>
                   </div>
                   {editForm.price > 0 && editForm.cost > 0 && (() => {
-                    const margin = ((editForm.price - editForm.cost) / editForm.price * 100);
-                    const profit = editForm.price - editForm.cost;
+                    const profit = calcProfit(editForm.price, editForm.cost);
+                    const margin = calcMarginPercent(editForm.price, editForm.cost);
                     return (
                       <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
                         <span className="text-slate-400">Ganancia por unidad</span>

@@ -29,6 +29,7 @@ import SupplierDetailModal from "../components/suppliers/SupplierDetailModal";
 import SupplierFormModal from "../components/suppliers/SupplierFormModal";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
+import { sumTotals } from "../utils/finance";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 3 — SUPPLIERS
@@ -246,7 +247,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
     setSsSaving(false);
   };
 
-  const totalSales   = supplierSales.reduce((s, r) => s + r.total, 0);
+  const totalSales   = sumTotals(supplierSales);
   const pendingCnt   = supplierSales.filter(r => r.status === "Pendiente").length;
   const deliveredCnt = supplierSales.filter(r => r.status === "Entregado").length;
   const cancelledCnt = supplierSales.filter(r => r.status === "Cancelado").length;
@@ -326,7 +327,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
   const supplierSalesHistory = selSupplier
     ? supplierSales.filter(sale => sale.supplier === selSupplier.name)
     : [];
-  const totalVendido = supplierSalesHistory.reduce((s, sale) => s + (sale.total || 0), 0);
+  const totalVendido = sumTotals(supplierSalesHistory);
 
   function closeSupplierDetail() {
     setSelSupplier(null);

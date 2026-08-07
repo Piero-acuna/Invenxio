@@ -22,6 +22,7 @@ import {
 } from "../services/firestoreService";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
+import { sumTotals, calcInventoryValue } from "../utils/finance";
 
 const todayStr = () => new Date().toISOString().split("T")[0];
 
@@ -68,7 +69,7 @@ export default function DashboardModule({ companyId, userName, companyName, perm
   const inv = useMemo(() => {
     const lowStock  = products.filter(p => p.status === "Stock Bajo").length;
     const outStock  = products.filter(p => p.status === "Agotado").length;
-    const value     = products.reduce((s, p) => s + (p.cost || 0) * (p.stock || 0), 0);
+    const value     = calcInventoryValue(products);
     return { total: products.length, lowStock, outStock, value };
   }, [products]);
 
@@ -113,9 +114,9 @@ export default function DashboardModule({ companyId, userName, companyName, perm
     const purchasesToday = transactions.filter(t => t.type === "compra" && t.date === today);
     return {
       salesCount:     salesToday.length,
-      salesTotal:     salesToday.reduce((s, t) => s + (t.total || 0), 0),
+      salesTotal:     sumTotals(salesToday),
       purchasesCount: purchasesToday.length,
-      purchasesTotal: purchasesToday.reduce((s, t) => s + (t.total || 0), 0),
+      purchasesTotal: sumTotals(purchasesToday),
       recent: transactions.filter(t => t.type === "venta" || t.type === "compra").slice(0, 5),
     };
   }, [transactions]);

@@ -19,6 +19,7 @@ import { generateInvoicePDF } from "../utils/generateInvoicePDF";
 import { Spinner } from "./shared/StatusUI";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
+import { sumTransactionsByType, calcGrossProfit, calcGlobalMarginPercent } from "../utils/finance";
 
 // ─── HISTORY TABLE ────────────────────────────────────────────────────────────
 const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements = [], supplierSales = [], loading, canViewFinance, canPurchase, canSell, billing, companyId }) => {
@@ -73,8 +74,8 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
     });
     return Object.values(months).map(m => ({
       ...m,
-      ganancia: m.ingresos - m.egresos,
-      margen: m.ingresos > 0 ? ((m.ingresos - m.egresos) / m.ingresos * 100) : 0,
+      ganancia: calcGrossProfit(m.ingresos, m.egresos),
+      margen: calcGlobalMarginPercent(m.ingresos, calcGrossProfit(m.ingresos, m.egresos)),
     }));
   }, [transactions]);
 
@@ -105,8 +106,8 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
     });
     return weekKeys.map(k => ({
       ...weeks[k],
-      ganancia: weeks[k].ingresos - weeks[k].egresos,
-      margen: weeks[k].ingresos > 0 ? ((weeks[k].ingresos - weeks[k].egresos) / weeks[k].ingresos * 100) : 0,
+      ganancia: calcGrossProfit(weeks[k].ingresos, weeks[k].egresos),
+      margen: calcGlobalMarginPercent(weeks[k].ingresos, calcGrossProfit(weeks[k].ingresos, weeks[k].egresos)),
     }));
   }, [transactions]);
 
@@ -195,10 +196,11 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
          (t.party || "").toLowerCase().includes(q));
     }), [unifiedHistory, sourceF, search]);
 
-  const totalCompras = transactions.filter(t => t.type === "compra").reduce((s, t) => s + (t.total||0), 0);
-  const totalVentas  = transactions.filter(t => t.type === "venta").reduce((s, t) => s + (t.total||0), 0);
-  const gananciaBruta = totalVentas - totalCompras;
-  const margenGlobal  = totalVentas > 0 ? (gananciaBruta / totalVentas * 100) : 0;
+  // Ver src/utils/finance.js para el glosario de estas fórmulas.
+  const totalCompras  = sumTransactionsByType(transactions, "compra");
+  const totalVentas   = sumTransactionsByType(transactions, "venta");
+  const gananciaBruta = calcGrossProfit(totalVentas, totalCompras);
+  const margenGlobal  = calcGlobalMarginPercent(totalVentas, gananciaBruta);
 
   // ── Exportar a Excel (.xlsx) lo que el usuario ve en pantalla ─────────────
   // Respeta la búsqueda y el filtro de tipo activos, y solo incluye columnas
