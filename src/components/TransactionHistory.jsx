@@ -27,7 +27,11 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
   const currencySymbol = companyCurrency.currencySymbol;
   const [search, setSearch] = useState("");
   const [sourceF, setSourceF] = useState("all"); // "all" | "inventario" | "almacen" | "proveedores"
-  const [chartPeriod, setChartPeriod] = useState("monthly"); // "monthly" | "weekly"
+  const [chartPeriod, setChartPeriod] = useState("monthly"); // "daily" | "weekly" | "monthly"
+  // Fuente de datos que alimenta el GRÁFICO de rentabilidad (separado del
+  // filtro de la tabla de abajo): Inventario (ventas/compras de tienda),
+  // Almacén/Proveedores (compras y ventas a proveedores), o los dos juntos.
+  const [chartSource, setChartSource] = useState("all"); // "all" | "inventario" | "proveedores"
 
   // Solo se procesan/muestran los tipos de transacción que el usuario tiene
   // permitido ver. Un empleado con únicamente "registrar_ventas" nunca debe
@@ -52,66 +56,6 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
     const d = new Date(dateStr);
     return isNaN(d) ? null : d;
   };
-
-  // ── Datos para gráfico mensual (últimos 6 meses) ──────────────────────────
-  const monthlyData = useMemo(() => {
-    const months = {};
-    const now = new Date();
-    // Inicializar últimos 6 meses
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-      const label = d.toLocaleDateString("es-PE", { month: "short", year: "2-digit" });
-      months[key] = { label, ingresos: 0, egresos: 0, ganancia: 0 };
-    }
-    transactions.forEach(t => {
-      const d = parseDate(t.date);
-      if (!d) return;
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-      if (!months[key]) return;
-      if (t.type === "venta")  months[key].ingresos += t.total || 0;
-      if (t.type === "compra") months[key].egresos  += t.total || 0;
-    });
-    return Object.values(months).map(m => ({
-      ...m,
-      ganancia: calcGrossProfit(m.ingresos, m.egresos),
-      margen: calcGlobalMarginPercent(m.ingresos, calcGrossProfit(m.ingresos, m.egresos)),
-    }));
-  }, [transactions]);
-
-  // ── Datos para gráfico semanal (últimas 8 semanas) ────────────────────────
-  const weeklyData = useMemo(() => {
-    const weeks = {};
-    const now = new Date();
-    for (let i = 7; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i * 7);
-      const startOfWeek = new Date(d);
-      startOfWeek.setDate(d.getDate() - d.getDay() + 1); // lunes
-      const key = startOfWeek.toISOString().slice(0,10);
-      const label = `${startOfWeek.getDate()}/${startOfWeek.getMonth()+1}`;
-      weeks[key] = { label, ingresos: 0, egresos: 0, ganancia: 0, startOfWeek };
-    }
-    const weekKeys = Object.keys(weeks).sort();
-    transactions.forEach(t => {
-      const d = parseDate(t.date);
-      if (!d) return;
-      // Encontrar a qué semana pertenece
-      const txMonday = new Date(d);
-      txMonday.setDate(d.getDate() - d.getDay() + 1);
-      const key = txMonday.toISOString().slice(0,10);
-      if (!weeks[key]) return;
-      if (t.type === "venta")  weeks[key].ingresos += t.total || 0;
-      if (t.type === "compra") weeks[key].egresos  += t.total || 0;
-    });
-    return weekKeys.map(k => ({
-      ...weeks[k],
-      ganancia: calcGrossProfit(weeks[k].ingresos, weeks[k].egresos),
-      margen: calcGlobalMarginPercent(weeks[k].ingresos, calcGrossProfit(weeks[k].ingresos, weeks[k].egresos)),
-    }));
-  }, [transactions]);
-
-  const chartData = chartPeriod === "monthly" ? monthlyData : weeklyData;
 
   // ── Historial unificado: Inventario + Almacén + Proveedores ──────────────
   // Se arma a partir de 3 colecciones distintas, evitando mostrar el mismo
@@ -184,6 +128,85 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       return tb - ta;
     });
   }, [rawTransactions, warehouseMovements, supplierSales, canPurchase, canSell]);
+
+  // ── Datos para el gráfico de rentabilidad: por día, semana o mes ─────────
+  // Se arma a partir de `unifiedHistory` (no de `transactions` directamente)
+  // para poder filtrar por fuente: solo Inventario, solo Almacén/Proveedores,
+  // o los dos juntos — según lo que el Dueño elija en `chartSource`.
+  // Solo se suman los eventos que SÍ tienen un monto real (venta, compra,
+  // venta a proveedor); los movimientos internos de almacén (entrada,
+  // salida, traslado, envío a tienda) no mueven dinero, así que no entran
+  // en "ingresos" ni "egresos".
+  const chartHistory = useMemo(() => {
+    if (chartSource === "all") return unifiedHistory;
+    if (chartSource === "inventario") return unifiedHistory.filter(t => t.source === "Inventario");
+    // "proveedores" agrupa Almacén + Proveedores, tal como se ve en la UI ("Almacén / Proveedores")
+    return unifiedHistory.filter(t => t.source === "Almacén" || t.source === "Proveedores");
+  }, [unifiedHistory, chartSource]);
+
+  /**
+   * Junta `chartHistory` en baldes de tiempo (día / semana / mes) y calcula
+   * ingresos, egresos, ganancia y margen de cada balde. `periodsBack` decide
+   * cuántos baldes se muestran (ej. últimos 14 días, últimas 8 semanas).
+   */
+  function aggregateByPeriod(period, periodsBack) {
+    const buckets = {};
+    const now = new Date();
+    const orderedKeys = [];
+
+    for (let i = periodsBack - 1; i >= 0; i--) {
+      let bucketDate, key, label;
+      if (period === "daily") {
+        bucketDate = new Date(now); bucketDate.setDate(now.getDate() - i);
+        key = bucketDate.toISOString().slice(0, 10);
+        label = bucketDate.toLocaleDateString("es-PE", { day: "2-digit", month: "short" });
+      } else if (period === "weekly") {
+        bucketDate = new Date(now); bucketDate.setDate(now.getDate() - i * 7);
+        bucketDate.setDate(bucketDate.getDate() - bucketDate.getDay() + 1); // lunes de esa semana
+        key = bucketDate.toISOString().slice(0, 10);
+        label = `${bucketDate.getDate()}/${bucketDate.getMonth() + 1}`;
+      } else {
+        bucketDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        key = `${bucketDate.getFullYear()}-${String(bucketDate.getMonth() + 1).padStart(2, "0")}`;
+        label = bucketDate.toLocaleDateString("es-PE", { month: "short", year: "2-digit" });
+      }
+      buckets[key] = { label, ingresos: 0, egresos: 0 };
+      orderedKeys.push(key);
+    }
+
+    chartHistory.forEach(t => {
+      if (t.amount == null) return; // movimiento sin valor monetario (entrada/salida/traslado/envío)
+      const d = parseDate(t.date);
+      if (!d) return;
+      let key;
+      if (period === "daily") {
+        key = d.toISOString().slice(0, 10);
+      } else if (period === "weekly") {
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - d.getDay() + 1);
+        key = monday.toISOString().slice(0, 10);
+      } else {
+        key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      }
+      if (!buckets[key]) return; // fuera del rango mostrado
+      if (t.type === "venta" || t.type === "venta_proveedor") buckets[key].ingresos += t.amount || 0;
+      if (t.type === "compra")                                buckets[key].egresos  += t.amount || 0;
+    });
+
+    return orderedKeys.map(k => {
+      const b = buckets[k];
+      const ganancia = calcGrossProfit(b.ingresos, b.egresos);
+      return { ...b, ganancia, margen: calcGlobalMarginPercent(b.ingresos, ganancia) };
+    });
+  }
+
+  const dailyData   = useMemo(() => aggregateByPeriod("daily",   14), [chartHistory]);
+  const weeklyData  = useMemo(() => aggregateByPeriod("weekly",   8), [chartHistory]);
+  const monthlyData = useMemo(() => aggregateByPeriod("monthly",  6), [chartHistory]);
+
+  const chartData =
+    chartPeriod === "daily"  ? dailyData :
+    chartPeriod === "weekly" ? weeklyData : monthlyData;
 
 
   const filtered = useMemo(() =>
@@ -336,16 +359,33 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       {/* ── Gráficos ── */}
       {canViewFinance && (
         <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
             <h4 className="text-sm font-bold text-white flex items-center gap-2">
               <TrendingUp size={15} className="text-amber-400" />
               Análisis de Rentabilidad
             </h4>
             <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-700">
-              {[{ id: "monthly", label: "Mensual" }, { id: "weekly", label: "Semanal" }].map(p => (
+              {[{ id: "daily", label: "Diario" }, { id: "weekly", label: "Semanal" }, { id: "monthly", label: "Mensual" }].map(p => (
                 <button key={p.id} onClick={() => setChartPeriod(p.id)}
                   className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors ${chartPeriod === p.id ? "bg-amber-500 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
                   {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Fuente de datos del gráfico: Inventario, Almacén/Proveedores, o ambos */}
+          <div className="flex items-center gap-2 mb-5 flex-wrap">
+            <span className="text-[11px] text-slate-500">Mostrando:</span>
+            <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-700">
+              {[
+                { id: "all",         label: "Los dos" },
+                { id: "inventario",  label: "📦 Inventario" },
+                { id: "proveedores", label: "🏬 Almacén / Proveedores" },
+              ].map(s => (
+                <button key={s.id} onClick={() => setChartSource(s.id)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-medium whitespace-nowrap transition-colors ${chartSource === s.id ? "bg-amber-500 text-slate-900" : "text-slate-400 hover:text-slate-200"}`}>
+                  {s.label}
                 </button>
               ))}
             </div>
