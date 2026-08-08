@@ -293,6 +293,7 @@ export function AuthProvider({ children }) {
       currentUser, userProfile, companyId, companyName, companyCurrency,
       loading, authError, setAuthError,
       login, loginWithGoogle, register, joinCompany, registerEmployee, logout, resetPassword,
+      setCompanyCurrency,
     }}>
       {children}
     </AuthContext.Provider>

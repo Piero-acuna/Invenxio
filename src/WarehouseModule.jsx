@@ -15,6 +15,7 @@ import {
 } from "./services/firestoreService";
 import { useAuth } from "./contexts/AuthContext";
 import { formatMoney } from "./utils/currency";
+import { calcUnitsFromPacks } from "./utils/packaging";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const LOCATION_TYPES = ["Zona", "Estante", "Pasillo", "Refrigerador", "Bodega", "Otro"];
@@ -384,7 +385,7 @@ function MapaTab({ locations, stockByLocation, stockByProduct, warehouseProducts
 // "Enviar a Tienda". El stock siempre se cuenta en EMPAQUES completos
 // (cajas), nunca en unidades sueltas.
 function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId, currencySymbol }) {
-  const EMPTY_FORM = { name: "", sku: "", packName: "", packQty: "", unitPrice: "", locationId: "", packCount: "" };
+  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", packQty: "", unitPrice: "", locationId: "", packCount: "" };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form,     setForm]     = useState(EMPTY_FORM);
@@ -398,7 +399,7 @@ function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, 
   function openNew() { setEditItem(null); setForm(EMPTY_FORM); setError(""); setShowForm(true); }
   function openEdit(p) {
     setEditItem(p);
-    setForm({ ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", packName: p.packName || "", packQty: p.packQty ?? "", unitPrice: p.unitPrice ?? "" });
+    setForm({ ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", description: p.description || "", packName: p.packName || "", packQty: p.packQty ?? "", unitPrice: p.unitPrice ?? "" });
     setError(""); setShowForm(true);
   }
 
@@ -415,6 +416,7 @@ function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, 
       const payload = {
         name: form.name.trim(),
         sku: form.sku.trim(),
+        description: form.description.trim(),
         packName: form.packName.trim(),
         packQty: Number(form.packQty),
         unitPrice: form.unitPrice ? Number(form.unitPrice) : null,
@@ -483,10 +485,15 @@ function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, 
               <input value={form.name} onChange={e => setF("name", e.target.value)} placeholder="Ej: Gaseosa Cola 500ml"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
-            <div>
+            <div className="col-span-2 sm:col-span-1">
               <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Código</label>
               <input value={form.sku} onChange={e => setF("sku", e.target.value)} placeholder="Opcional"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
+            </div>
+            <div className="col-span-2">
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Descripción</label>
+              <textarea value={form.description} onChange={e => setF("description", e.target.value)} placeholder="Ej: Presentación de 500ml, caja de 24 unidades" rows={2}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors resize-none"/>
             </div>
             <div>
               <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Unidad por empaque *</label>
@@ -521,7 +528,7 @@ function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, 
             </>)}
           </div>
           {!editItem && form.packQty && form.packCount && (
-            <p className="text-[11px] text-amber-400/80">📦 {form.packCount} {form.packName || "empaques"} × {form.packQty} und = {Number(form.packCount) * Number(form.packQty)} unidades en total</p>
+            <p className="text-[11px] text-amber-400/80">📦 {form.packCount} {form.packName || "empaques"} × {form.packQty} und = {calcUnitsFromPacks(form.packCount, form.packQty)} unidades en total</p>
           )}
           <div className="flex gap-2">
             <button onClick={() => { setShowForm(false); setEditItem(null); }} className="flex-1 py-2 text-xs border border-slate-700 text-slate-400 rounded-lg hover:border-slate-600 transition-colors">Cancelar</button>
@@ -554,6 +561,7 @@ function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, 
                   </div>
                 </div>
                 <p className="text-[11px] text-amber-400/80">📦 {p.packName} × {p.packQty} und{Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} c/u` : ""}</p>
+                {p.description && <p className="text-[11px] text-slate-500 leading-snug">{p.description}</p>}
 
                 {/* Ubicación, nombre y cantidad por ubicación */}
                 <div className="border-t border-slate-700/50 pt-2 space-y-1">
@@ -637,7 +645,7 @@ function AddStockModal({ product, locations, companyId, userName, onClose }) {
           <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Cantidad de {product.packName} ({product.packQty} und c/u) *</label>
           <input type="number" min="1" value={packCount} onChange={e => setPackCount(e.target.value)} placeholder="Ej: 5"
             className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
-          {Number(packCount) > 0 && <p className="text-[10px] text-amber-400/80 mt-1">= {Number(packCount) * Number(product.packQty)} und en total</p>}
+          {Number(packCount) > 0 && <p className="text-[10px] text-amber-400/80 mt-1">= {calcUnitsFromPacks(packCount, product.packQty)} und en total</p>}
         </div>
         <div>
           <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Motivo</label>
@@ -697,7 +705,7 @@ function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId,
   // eso se convierte a unidades reales para sumarlas al stock de la tienda,
   // ya que la tienda vende por unidad.
   const packCount = Number(form.qty) || 0;
-  const unitQty   = packCount * packQty;
+  const unitQty   = calcUnitsFromPacks(packCount, packQty);
 
   const fromStock = form.product && form.fromLocationId
     ? (stockByProduct[form.product.id] || []).find(s => s.locationId === form.fromLocationId)

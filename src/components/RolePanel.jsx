@@ -11,9 +11,10 @@ import {
   LayoutPanelLeft, X, UserPlus, Users, Mail, Lock, User as UserIcon,
   Crown, Shield, RefreshCw, AlertCircle, CheckCircle,
   Power, PowerOff, ChevronDown, Settings2, Save, Receipt, Building2,
-  Package, BarChart2, Warehouse, Truck, Sliders, Zap,
+  Package, BarChart2, Warehouse, Truck, Sliders, Zap, Globe,
 } from "lucide-react";
 import { PERMISSION_GROUPS, defaultPermissions, getEffectivePermissions } from "../config/permissions";
+import { COUNTRIES, getCountryConfig } from "../config/countryConfig";
 import { logAndGetErrorMessage } from "../utils/errors";
 
 // Iconos por grupo de permisos (solo visual, permissions.js se queda sin JSX)
@@ -148,6 +149,7 @@ export default function RolePanel({
   employees, employeesLoading,
   onRegisterEmployee, onChangePermissions, onToggleActive,
   billing, onSaveBilling,
+  companyCurrency, onChangeCountry,
 }) {
   const [open,     setOpen]     = useState(false);
   const [tab,      setTab]      = useState("perfil"); // "perfil" | "equipo"
@@ -202,7 +204,7 @@ export default function RolePanel({
           </div>
 
           <div className="p-4 max-h-[min(32rem,70vh)] overflow-y-auto">
-            {tab === "perfil" && <PerfilTab userProfile={userProfile} companyName={companyName} />}
+            {tab === "perfil" && <PerfilTab userProfile={userProfile} companyName={companyName} companyCurrency={companyCurrency} onChangeCountry={onChangeCountry} />}
             {tab === "equipo" && canManage && (
               <EquipoTab
                 employees={employees}
@@ -226,7 +228,7 @@ export default function RolePanel({
 }
 
 // ── Pestaña: Mis Datos ────────────────────────────────────────────────────────
-function PerfilTab({ userProfile, companyName }) {
+function PerfilTab({ userProfile, companyName, companyCurrency, onChangeCountry }) {
   if (!userProfile) return null;
   const isOwner = userProfile.role === "owner";
   const perms = getEffectivePermissions(userProfile);
@@ -247,6 +249,10 @@ function PerfilTab({ userProfile, companyName }) {
       <Row label="Empresa" value={companyName} />
       <Row label="Estado" value={userProfile.active === false ? "Desactivado" : "Activo"} />
 
+      {isOwner && (
+        <CurrencySection companyCurrency={companyCurrency} onChangeCountry={onChangeCountry} />
+      )}
+
       {!isOwner && (
         <div className="pt-2 border-t border-slate-800">
           <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Mis permisos activos</p>
@@ -262,6 +268,88 @@ function PerfilTab({ userProfile, companyName }) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sección: Moneda y pasarela de pago (solo Dueño) ──────────────────────────
+// Cambiar el país recalcula moneda + pasarela según countryConfig.js. NO
+// convierte montos ya guardados (ver el aviso que se muestra abajo) — solo
+// cambia el símbolo con el que se muestra todo de ahora en adelante y a qué
+// pasarela se le cobra la próxima suscripción.
+function CurrencySection({ companyCurrency, onChangeCountry }) {
+  const [country,  setCountry]  = useState(companyCurrency?.country || "PE");
+  const [saving,   setSaving]   = useState(false);
+  const [saved,    setSaved]    = useState(false);
+  const [error,    setError]    = useState("");
+
+  // Si companyCurrency cambia desde afuera (ej. otra pestaña del navegador),
+  // reflejamos el valor real mientras el Dueño no tenga una edición pendiente.
+  useEffect(() => {
+    if (!saving) setCountry(companyCurrency?.country || "PE");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyCurrency?.country]);
+
+  const preview = getCountryConfig(country);
+  const isDirty = country !== (companyCurrency?.country || "PE");
+
+  async function handleSave() {
+    setError(""); setSaving(true);
+    try {
+      await onChangeCountry(country);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(logAndGetErrorMessage(err, "Error al cambiar la moneda:", "No se pudo cambiar la moneda."));
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="pt-2 border-t border-slate-800 space-y-2">
+      <p className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+        <Globe size={11} /> Moneda y pasarela de pago
+      </p>
+
+      <div className="relative">
+        <select
+          value={country}
+          onChange={e => { setCountry(e.target.value); setSaved(false); }}
+          className="w-full pl-3 pr-4 py-2 bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-lg text-xs text-slate-200 focus:outline-none transition-colors appearance-none"
+        >
+          {COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+        </select>
+      </div>
+
+      <p className="text-[11px] text-slate-500">
+        {preview.paymentGateway === "culqi"
+          ? `Se mostrará todo en soles (${preview.currencySymbol}) y se cobrará por Culqi.`
+          : `Se mostrará todo en dólares (${preview.currencySymbol}) y se cobrará por Mercado Pago.`}
+      </p>
+
+      {isDirty && (
+        <div className="flex items-start gap-1.5 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-[11px] text-amber-300 leading-snug">
+          <AlertCircle size={12} className="flex-shrink-0 mt-0.5" />
+          Esto no convierte los precios que ya tienes guardados — un producto que cuesta "20" hoy va a seguir costando "20", solo cambia el símbolo. Ajusta tus precios manualmente si corresponde.
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-1.5 p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-[11px] text-red-400">
+          <AlertCircle size={12} className="flex-shrink-0 mt-0.5" />{error}
+        </div>
+      )}
+
+      {isDirty && (
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="w-full flex items-center justify-center gap-1.5 py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 text-slate-900 disabled:text-slate-500 font-semibold text-xs rounded-lg transition-colors"
+        >
+          {saving ? <RefreshCw size={13} className="animate-spin" /> : saved ? <CheckCircle size={13} /> : <Save size={13} />}
+          {saved ? "Guardado" : "Guardar cambio de moneda"}
+        </button>
       )}
     </div>
   );

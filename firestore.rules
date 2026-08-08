@@ -166,10 +166,23 @@ service cloud.firestore {
       // updateCompanyBilling(): solo el Dueño, y solo puede tocar billing/
       // updatedAt/name — nunca ownerId ni plan (el plan real de pago vive en
       // meta/subscription y solo lo cambia el backend de Culqi).
+      //
+      // updateCompanyCountry(): el Dueño también puede cambiar país/moneda/
+      // pasarela (ver "Mis Datos" → RolePanel.jsx) — pero los 3 campos deben
+      // llegar siempre juntos y coincidir entre sí según countryConfig.js,
+      // para que nadie pueda mandar, por ejemplo, país "Argentina" con
+      // pasarela "culqi" (que es exclusiva de Perú).
       allow update: if isOwner(companyId)
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['billing', 'updatedAt', 'name']);
+             .hasOnly(['billing', 'updatedAt', 'name', 'country', 'paymentGateway', 'currencyCode', 'currencySymbol'])
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['country', 'paymentGateway', 'currencyCode', 'currencySymbol'])
+          || (request.resource.data.country == 'PE'
+                ? request.resource.data.paymentGateway == 'culqi'  && request.resource.data.currencyCode == 'PEN' && request.resource.data.currencySymbol == 'S/'
+                : request.resource.data.paymentGateway == 'mercadopago' && request.resource.data.currencyCode == 'USD' && request.resource.data.currencySymbol == '$'
+             )
+        );
 
       allow delete: if false;
 

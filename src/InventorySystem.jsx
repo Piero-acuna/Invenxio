@@ -19,8 +19,9 @@ import {
 import { useAuth } from "./contexts/AuthContext";
 import {
   subscribeToEmployees, updateUserPermissions, setEmployeeActive,
-  subscribeToCompany, updateCompanyBilling, subscribeToSubscription,
+  subscribeToCompany, updateCompanyBilling, updateCompanyCountry, subscribeToSubscription,
 } from "./services/firestoreService";
+import { getCountryConfig } from "./config/countryConfig";
 import RolePanel, { RoleBadge } from "./components/RolePanel";
 import { hasPermission, canSeeTab, TAB_DEFS } from "./config/permissions";
 import { useCollection } from "./hooks/useCollection";
@@ -60,7 +61,7 @@ function ModuleLoader() {
 }
 
 export default function InventoryApp() {
-  const { currentUser, userProfile, companyName, companyCurrency, logout, registerEmployee } = useAuth();
+  const { currentUser, userProfile, companyName, companyCurrency, setCompanyCurrency, logout, registerEmployee } = useAuth();
   const companyId = userProfile?.companyId;
   const userName  = userProfile?.name || currentUser?.email || "Usuario";
   const isOwner   = userProfile?.role === "owner";
@@ -130,6 +131,16 @@ export default function InventoryApp() {
     await updateCompanyBilling(companyId, data);
   }
 
+  // ── Cambiar país / moneda / pasarela de pago (ver "Mis Datos" → RolePanel) ──
+  async function handleChangeCountry(country) {
+    await updateCompanyCountry(companyId, country);
+    // Actualizamos el estado local de inmediato — sin esto, el símbolo de
+    // moneda de toda la app seguiría mostrando el valor viejo hasta el
+    // próximo refresh de página, porque companyCurrency no tiene un listener
+    // en vivo (se lee una sola vez al iniciar sesión).
+    setCompanyCurrency(getCountryConfig(country));
+  }
+
   // ── Estado de prueba gratis / pago ──────────────────────────────────────
   // `subscription === undefined` = todavía cargando. `null` = no existe el
   // documento (no debería pasar en una empresa creada normalmente, pero si
@@ -192,6 +203,8 @@ export default function InventoryApp() {
                 onToggleActive={handleToggleActive}
                 billing={billing}
                 onSaveBilling={handleSaveBilling}
+                companyCurrency={companyCurrency}
+                onChangeCountry={handleChangeCountry}
               />
             </div>
 

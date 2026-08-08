@@ -122,6 +122,29 @@ export async function updateCompanyBilling(companyId, billing) {
 }
 
 /**
+ * Cambia el país (y por lo tanto la moneda + pasarela de pago) de una
+ * empresa YA REGISTRADA. Ver src/config/countryConfig.js para la regla
+ * país → moneda/pasarela.
+ *
+ * IMPORTANTE — esto NO convierte montos ya guardados: un producto que
+ * costaba "20" en soles va a costar "20" en dólares después del cambio,
+ * porque este sistema no hace conversión de tipo de cambio. Solo cambia
+ * el símbolo con el que se muestra todo de ahora en adelante y a qué
+ * pasarela se le cobra la próxima suscripción. Por eso el selector en la
+ * UI (ver RolePanel.jsx) muestra siempre esta advertencia antes de guardar.
+ */
+export async function updateCompanyCountry(companyId, country) {
+  const { paymentGateway, currencyCode, currencySymbol } = getCountryConfig(country);
+  return updateDoc(companyRef(companyId), {
+    country,
+    paymentGateway,
+    currencyCode,
+    currencySymbol,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
  * Suscripción en tiempo real al estado de prueba gratis / pago de la
  * empresa (companies/{id}/meta/subscription). Es de SOLO LECTURA desde el
  * cliente — ver firestore.rules — así que este archivo no tiene ninguna

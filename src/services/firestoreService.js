@@ -46,6 +46,7 @@ export {
   getCompanyProfile,
   subscribeToCompany,
   updateCompanyBilling,
+  updateCompanyCountry,
   subscribeToSubscription,
   getSubscription,
   getNextInvoiceNumber,
