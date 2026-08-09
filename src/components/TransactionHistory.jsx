@@ -19,7 +19,7 @@ import { generateInvoicePDF } from "../utils/generateInvoicePDF";
 import { Spinner } from "./shared/StatusUI";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
-import { sumTransactionsByType, calcGrossProfit, calcGlobalMarginPercent } from "../utils/finance";
+import { calcGrossProfit, calcGlobalMarginPercent } from "../utils/finance";
 
 // ─── HISTORY TABLE ────────────────────────────────────────────────────────────
 const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements = [], supplierSales = [], loading, canViewFinance, canPurchase, canSell, billing, companyId }) => {
@@ -32,18 +32,6 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
   // filtro de la tabla de abajo): Inventario (ventas/compras de tienda),
   // Almacén/Proveedores (compras y ventas a proveedores), o los dos juntos.
   const [chartSource, setChartSource] = useState("all"); // "all" | "inventario" | "proveedores"
-
-  // Solo se procesan/muestran los tipos de transacción que el usuario tiene
-  // permitido ver. Un empleado con únicamente "registrar_ventas" nunca debe
-  // ver registros de tipo "compra" en el historial (ni en gráficos, ni en
-  // totales), aunque existan en la empresa.
-  const transactions = useMemo(
-    () => rawTransactions.filter(t =>
-      (t.type === "compra" && canPurchase) ||
-      (t.type === "venta"  && canSell)
-    ),
-    [rawTransactions, canPurchase, canSell]
-  );
 
   // ── Parsear fecha desde string "DD/MM/YYYY" o timestamp ──────────────────
   const parseDate = (dateStr) => {
@@ -130,18 +118,36 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
   }, [rawTransactions, warehouseMovements, supplierSales, canPurchase, canSell]);
 
   // ── Datos para el gráfico de rentabilidad: por día, semana o mes ─────────
-  // Se arma a partir de `unifiedHistory` (no de `transactions` directamente)
-  // para poder filtrar por fuente: solo Inventario, solo Almacén/Proveedores,
-  // o los dos juntos — según lo que el Dueño elija en `chartSource`.
-  // Solo se suman los eventos que SÍ tienen un monto real (venta, compra,
+  // Se arma a partir de `unifiedHistory` (no solo de la colección
+  // "transactions") para poder filtrar por fuente: solo Inventario, solo
+  // Almacén/Proveedores, o los dos juntos — según lo que el Dueño elija en
+  // `chartSource`. Solo se suman los eventos que SÍ tienen un monto real (venta, compra,
   // venta a proveedor); los movimientos internos de almacén (entrada,
   // salida, traslado, envío a tienda) no mueven dinero, así que no entran
   // en "ingresos" ni "egresos".
+  // ── Qué eventos alimentan cada vista del gráfico ──────────────────────────
+  // OJO: en este sistema TODA compra pasa por Almacén (se le compra a un
+  // proveedor y entra a una ubicación física — ver SuppliersModule.jsx →
+  // recordWarehousePurchase). No existe ningún flujo de "compra directa a
+  // Tienda", así que NINGUNA compra real tiene t.source === "Inventario".
+  //
+  // Por eso una compra cuenta como egreso en LAS DOS vistas, no solo en una:
+  //   • "Inventario": porque esa compra es el costo real de la mercadería
+  //     que la tienda vende — sin esto, "Inventario" mostraría 0 egresos y
+  //     un margen falso del 100% sobre cada venta.
+  //   • "Almacén / Proveedores": porque es, literalmente, la compra al
+  //     proveedor / el ingreso de mercadería al almacén.
+  // Esto NO duplica el total: en "Todos" cada compra se sigue contando una
+  // sola vez (unifiedHistory ya trae cada evento una única vez); solo se
+  // repite entre las dos vistas PARCIALES porque son dos lecturas distintas
+  // del mismo gasto, no dos gastos distintos.
   const chartHistory = useMemo(() => {
     if (chartSource === "all") return unifiedHistory;
-    if (chartSource === "inventario") return unifiedHistory.filter(t => t.source === "Inventario");
+    if (chartSource === "inventario") {
+      return unifiedHistory.filter(t => t.type === "venta" || t.type === "compra");
+    }
     // "proveedores" agrupa Almacén + Proveedores, tal como se ve en la UI ("Almacén / Proveedores")
-    return unifiedHistory.filter(t => t.source === "Almacén" || t.source === "Proveedores");
+    return unifiedHistory.filter(t => t.type === "compra" || t.type === "venta_proveedor" || t.source === "Almacén");
   }, [unifiedHistory, chartSource]);
 
   /**
@@ -220,8 +226,20 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
     }), [unifiedHistory, sourceF, search]);
 
   // Ver src/utils/finance.js para el glosario de estas fórmulas.
-  const totalCompras  = sumTransactionsByType(transactions, "compra");
-  const totalVentas   = sumTransactionsByType(transactions, "venta");
+  //
+  // OJO: se calculan sobre `unifiedHistory` (Inventario + Almacén +
+  // Proveedores juntos), no solo sobre la colección "transactions" (que es
+  // solo ventas/compras de tienda). Antes estos totales usaban solo esa
+  // colección, así que las VENTAS A PROVEEDORES (colección aparte,
+  // `supplierSales`) quedaban afuera de "Total Ingresos", subestimándolo.
+  // Cada evento de `unifiedHistory` ya aparece una sola vez (ver esa
+  // construcción más arriba), así que esto no duplica nada.
+  const totalCompras  = unifiedHistory
+    .filter(t => t.type === "compra")
+    .reduce((sum, t) => sum + (t.amount || 0), 0);
+  const totalVentas   = unifiedHistory
+    .filter(t => t.type === "venta" || t.type === "venta_proveedor")
+    .reduce((sum, t) => sum + (t.amount || 0), 0);
   const gananciaBruta = calcGrossProfit(totalVentas, totalCompras);
   const margenGlobal  = calcGlobalMarginPercent(totalVentas, gananciaBruta);
 
@@ -314,7 +332,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
             {
               label: "Total Ingresos",
               value: `${formatMoney(totalVentas, currencySymbol)}`,
-              sub: `${transactions.filter(t=>t.type==="venta").length} ventas`,
+              sub: `${unifiedHistory.filter(t=>t.type==="venta").length} ventas + ${unifiedHistory.filter(t=>t.type==="venta_proveedor").length} a proveedores`,
               color: "text-emerald-400",
               bg: "bg-emerald-500/10 border-emerald-500/20",
               icon: <ArrowDownCircle size={16} />,
@@ -322,7 +340,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
             {
               label: "Total Egresos",
               value: `${formatMoney(totalCompras, currencySymbol)}`,
-              sub: `${transactions.filter(t=>t.type==="compra").length} compras`,
+              sub: `${unifiedHistory.filter(t=>t.type==="compra").length} compras`,
               color: "text-blue-400",
               bg: "bg-blue-500/10 border-blue-500/20",
               icon: <ArrowUpCircle size={16} />,
@@ -375,7 +393,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
           </div>
 
           {/* Fuente de datos del gráfico: Inventario, Almacén/Proveedores, o ambos */}
-          <div className="flex items-center gap-2 mb-5 flex-wrap">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
             <span className="text-[11px] text-slate-500">Mostrando:</span>
             <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-700">
               {[
@@ -390,6 +408,11 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
               ))}
             </div>
           </div>
+          <p className="text-[10px] text-slate-600 mb-5 leading-snug">
+            {chartSource === "inventario" && "Ventas de tienda vs. el costo de todo lo comprado (aunque haya entrado por Almacén) — así el margen refleja el costo real de tu mercadería."}
+            {chartSource === "proveedores" && "Compras a proveedores vs. ventas hechas a proveedores. Una compra cuenta acá y también en \"Inventario\": son dos lecturas del mismo gasto, no se duplica en el total."}
+            {chartSource === "all" && "Todo el negocio junto: ventas de tienda + ventas a proveedores como ingresos, todas las compras como egresos — cada evento cuenta una sola vez."}
+          </p>
 
           {/* Gráfico 1: Ingresos vs Egresos vs Ganancia (barras) */}
           <div className="mb-6">
