@@ -35,7 +35,7 @@ if (!admin.apps.length) {
   });
 }
 
-const PLAN_AMOUNT_USD = 14.99; // $ 14.99 — debe coincidir con PLAN_AMOUNT_USD de PaywallScreen.jsx
+const PLAN_AMOUNT_USD = 39.99; // $ 39.99 — debe coincidir con PLAN_AMOUNT_USD de PaywallScreen.jsx
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

@@ -22,9 +22,9 @@ import { Lock, CreditCard, Loader2, AlertCircle, CheckCircle2 } from "lucide-rea
 import { logAndGetErrorMessage } from "../utils/errors";
 
 const CULQI_SCRIPT_URL = "https://checkout.culqi.com/js/v4";
-const PLAN_AMOUNT_SOLES = 54.99; // S/ 54.99 al mes (Culqi/Perú) — ajusta a tu precio real
+const PLAN_AMOUNT_SOLES = 57.99; // S/ 57.99 al mes (Culqi/Perú) — ajusta a tu precio real
 const PLAN_AMOUNT_CENTS = PLAN_AMOUNT_SOLES * 100; // Culqi cobra en céntimos
-const PLAN_AMOUNT_USD = 14.99; // $ 14.99 al mes (Mercado Pago/resto de países) — ajusta a tu precio real
+const PLAN_AMOUNT_USD = 39.99; // $ 39.99 al mes (Mercado Pago/resto de países) — ajusta a tu precio real
 
 function loadCulqiScript() {
   return new Promise((resolve, reject) => {

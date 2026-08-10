@@ -48,7 +48,7 @@ if (!admin.apps.length) {
   });
 }
 
-const PLAN_AMOUNT_CENTS = 5499; // S/ 54.99 — debe coincidir con PLAN_AMOUNT_CENTS de PaywallScreen.jsx
+const PLAN_AMOUNT_CENTS = 5799; // S/ 57.99 — debe coincidir con PLAN_AMOUNT_CENTS de PaywallScreen.jsx
 const PLAN_DAYS = 30;
 
 export default async function handler(req, res) {
