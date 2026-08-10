@@ -8,6 +8,7 @@ import { useState } from "react";
 import { X, RefreshCw, CheckCircle } from "lucide-react";
 import { addWarehouseMovement } from "../../services/firestoreService";
 import { logAndGetErrorMessage } from "../../utils/errors";
+import { calcUnitsFromPacks } from "../../utils/packaging";
 
 export default function AddStockModal({ product, locations, companyId, userName, onClose }) {
   const [locationId, setLocationId] = useState("");
@@ -56,7 +57,7 @@ export default function AddStockModal({ product, locations, companyId, userName,
           <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Cantidad de {product.packName} ({product.packQty} und c/u) *</label>
           <input type="number" min="1" value={packCount} onChange={e => setPackCount(e.target.value)} placeholder="Ej: 5"
             className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
-          {Number(packCount) > 0 && <p className="text-[10px] text-amber-400/80 mt-1">= {Number(packCount) * Number(product.packQty)} und en total</p>}
+          {Number(packCount) > 0 && <p className="text-[10px] text-amber-400/80 mt-1">= {calcUnitsFromPacks(packCount, product.packQty)} und en total</p>}
         </div>
         <div>
           <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Motivo</label>

@@ -21,6 +21,7 @@ import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
 import { useAuth } from "../../contexts/AuthContext";
 import { formatMoney } from "../../utils/currency";
+import { calcUnitsFromPacks } from "../../utils/packaging";
 
 export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
   const { companyCurrency } = useAuth();
@@ -169,7 +170,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
             </>)}
           </div>
           {!editItem && form.packQty && form.packCount && (
-            <p className="text-[11px] text-amber-400/80">📦 {form.packCount} {form.packName || "empaques"} × {form.packQty} und = {Number(form.packCount) * Number(form.packQty)} unidades en total</p>
+            <p className="text-[11px] text-amber-400/80">📦 {form.packCount} {form.packName || "empaques"} × {form.packQty} und = {calcUnitsFromPacks(form.packCount, form.packQty)} unidades en total</p>
           )}
           <div className="flex gap-2">
             <button onClick={() => { setShowForm(false); setEditItem(null); }} className="flex-1 py-2 text-xs border border-slate-700 text-slate-400 rounded-lg hover:border-slate-600 transition-colors">Cancelar</button>

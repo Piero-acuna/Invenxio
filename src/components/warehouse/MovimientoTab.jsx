@@ -14,6 +14,7 @@ import {
 import { addWarehouseMovement, sendWarehouseToInventory } from "../../services/firestoreService";
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { TYPE_CFG, SELECTABLE_MOVEMENT_TYPES } from "./constants";
+import { calcUnitsFromPacks } from "../../utils/packaging";
 
 export default function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId, userName, stockByProduct }) {
   const EMPTY = {
@@ -47,7 +48,7 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
   // eso se convierte a unidades reales para sumarlas al stock de la tienda,
   // ya que la tienda vende por unidad.
   const packCount = Number(form.qty) || 0;
-  const unitQty   = packCount * packQty;
+  const unitQty   = calcUnitsFromPacks(packCount, packQty);
 
   const fromStock = form.product && form.fromLocationId
     ? (stockByProduct[form.product.id] || []).find(s => s.locationId === form.fromLocationId)
@@ -242,6 +243,7 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
                       <span className="text-xs font-mono text-slate-500 ml-auto">Stock tienda: {form.storeProduct.stock ?? 0}</span>
                       <button onClick={() => { setF("storeProduct", null); setF("storeProductSearch", ""); }}><X size={13} className="text-slate-500" /></button>
                     </div>
+                    {form.storeProduct.description && <p className="text-[11px] text-slate-500 mt-1">{form.storeProduct.description}</p>}
                     {form.storeProduct.name?.trim().toLowerCase() !== form.product?.name?.trim().toLowerCase() && (
                       <p className="text-[11px] text-amber-400 flex items-center gap-1"><AlertTriangle size={11}/> El nombre no coincide exactamente con "{form.product?.name}". Verifica que sea el producto correcto.</p>
                     )}
