@@ -3,7 +3,7 @@
 // El ajuste de stock (adjustProductStock) ahora es una función RPC atómica
 // (ver supabase/migrations/0003_functions.sql) en vez de un runTransaction.
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabase, paramsToSnake, assertNoError, rowsToCamel } from "./shared";
+import { supabase, paramsToSnake, assertNoError, rowsToCamel, uniqueChannelName } from "./shared";
 
 export async function addProduct(companyId, product) {
   const payload = { ...paramsToSnake(product), company_id: companyId };
@@ -50,7 +50,7 @@ export function subscribeToProductHistory(companyId, productId, onData, maxEntri
 
   fetchAll();
   const channel = supabase
-    .channel(`product_history:${productId}`)
+    .channel(uniqueChannelName(`product_history:${productId}`))
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "product_history", filter: `product_id=eq.${productId}` },

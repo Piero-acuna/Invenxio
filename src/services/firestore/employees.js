@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // src/services/firestore/employees.js — versión Supabase
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabase, rowsToCamel, assertNoError } from "./shared";
+import { supabase, rowsToCamel, assertNoError, uniqueChannelName } from "./shared";
 
 export function subscribeToEmployees(companyId, onData) {
   let cancelled = false;
@@ -20,7 +20,7 @@ export function subscribeToEmployees(companyId, onData) {
 
   fetchAll();
   const channel = supabase
-    .channel(`users:${companyId}`)
+    .channel(uniqueChannelName(`users:${companyId}`))
     .on("postgres_changes", { event: "*", schema: "public", table: "users", filter: `company_id=eq.${companyId}` }, fetchAll)
     .subscribe();
 

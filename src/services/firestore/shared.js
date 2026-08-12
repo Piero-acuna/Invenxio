@@ -57,6 +57,20 @@ export function assertNoError(error, context) {
   }
 }
 
+// ── Nombres de canal ÚNICOS por suscripción ─────────────────────────────
+// BUG QUE ESTO EVITA: si dos canales se crean con el MISMO nombre de topic
+// mientras el anterior todavía no terminó de cerrarse (ej. React StrictMode
+// desmonta y remonta un componente muy rápido, o dos componentes distintos
+// se suscriben a la misma tabla a la vez), el cliente de Supabase Realtime
+// detecta el topic repetido y devuelve el canal VIEJO ya suscrito en vez de
+// crear uno nuevo. Llamar `.on()` sobre un canal ya suscrito lanza:
+// "cannot add `postgres_changes` callbacks ... after `subscribe()`" — un
+// error no capturado que tira abajo el render de React (pantalla blanca).
+// La solución recomendada por Supabase es simple: que el nombre del topic
+// sea único por cada suscripción activa, no solo por tabla+empresa.
+let channelSeq = 0;
+export const uniqueChannelName = (base) => `${base}:${Date.now()}:${channelSeq++}`;
+
 // ── Timestamps: Postgres pone `now()` solo. Para nuevos inserts, dejamos que
 //    la columna default/trigger lo genere; NO mandamos created_at/updated_at
 //    en los payloads de insert/update (a diferencia de Firestore, donde
@@ -87,7 +101,7 @@ export function subscribeToCollection(companyId, table, onData, orderField = "cr
   fetchAll();
 
   const channel = supabase
-    .channel(`${table}:${companyId}`)
+    .channel(uniqueChannelName(`${table}:${companyId}`))
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table, filter: `company_id=eq.${companyId}` },
@@ -124,7 +138,7 @@ export function subscribeToRow(table, matchColumn, matchValue, onData) {
   fetchOne();
 
   const channel = supabase
-    .channel(`${table}:${matchColumn}:${matchValue}`)
+    .channel(uniqueChannelName(`${table}:${matchColumn}:${matchValue}`))
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table, filter: `${matchColumn}=eq.${matchValue}` },
