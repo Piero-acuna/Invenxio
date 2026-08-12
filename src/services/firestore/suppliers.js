@@ -1,30 +1,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/services/firestore/suppliers.js
-//
-// CRUD del catálogo de proveedores (companies/{id}/suppliers/{id}). Las
-// métricas del proveedor (totalOrders/totalSpent/lastOrder) se actualizan
-// desde transactions.js (recordPurchase) y desde suppliers.service no vive
-// esa lógica — acá solo el alta/edición/baja manual del proveedor mismo.
+// src/services/firestore/suppliers.js — versión Supabase
 // ─────────────────────────────────────────────────────────────────────────────
-import { addDoc, updateDoc, deleteDoc, serverTimestamp, colRef, docRef } from "./shared";
+import { supabase, paramsToSnake, assertNoError } from "./shared";
 
 export async function addSupplier(companyId, supplier) {
-  return addDoc(colRef(companyId, "suppliers"), {
-    ...supplier,
-    totalOrders: 0,
-    totalSpent:  0,
-    lastOrder:   "—",
-    createdAt:   serverTimestamp(),
-  });
+  const payload = { ...paramsToSnake(supplier), company_id: companyId, total_orders: 0, total_spent: 0, last_order: "—" };
+  const { data, error } = await supabase.from("suppliers").insert(payload).select("id").single();
+  assertNoError(error, "addSupplier");
+  return data.id;
 }
 
 export async function updateSupplier(companyId, supplierId, data) {
-  return updateDoc(docRef(companyId, "suppliers", supplierId), {
-    ...data,
-    updatedAt: serverTimestamp(),
-  });
+  const { error } = await supabase
+    .from("suppliers")
+    .update(paramsToSnake(data))
+    .eq("id", supplierId)
+    .eq("company_id", companyId);
+  assertNoError(error, "updateSupplier");
 }
 
 export async function deleteSupplier(companyId, supplierId) {
-  return deleteDoc(docRef(companyId, "suppliers", supplierId));
+  const { error } = await supabase.from("suppliers").delete().eq("id", supplierId).eq("company_id", companyId);
+  assertNoError(error, "deleteSupplier");
 }

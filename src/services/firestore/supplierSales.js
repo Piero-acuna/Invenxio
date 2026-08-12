@@ -1,28 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/services/firestore/supplierSales.js
-//
-// Ventas del ALMACÉN a un proveedor (companies/{id}/supplierSales/{id}) — el
-// producto sale definitivamente del negocio, a diferencia de sendWarehouseToInventory
-// (warehouse.js) que lo mueve internamente a la tienda. Incluye la cancelación,
-// que devuelve el stock al almacén.
+// src/services/firestore/supplierSales.js — versión Supabase
 // ─────────────────────────────────────────────────────────────────────────────
-import { addDoc, updateDoc, serverTimestamp, colRef, docRef } from "./shared";
-import { addWarehouseMovement } from "./warehouse";
+import { supabase, assertNoError, paramsToSnake } from "./shared";
 
-export async function addSupplierSale(companyId, sale) {
-  return addDoc(colRef(companyId, "supplierSales"), {
-    ...sale,
-    date:      new Date().toISOString().split("T")[0],
-    createdAt: serverTimestamp(),
-  });
-}
-
-/**
- * Vende productos del ALMACÉN a un proveedor: descuenta el stock del almacén
- * (en empaques, como una "salida" — queda en el Historial del almacén) y
- * registra la venta en "supplierSales". No suma a ningún inventario, el
- * producto sale definitivamente del negocio.
- */
 export async function sellWarehouseToSupplier(companyId, {
   warehouseProductId, warehouseProductName, sku, description,
   locationId, locationName,
@@ -30,65 +10,53 @@ export async function sellWarehouseToSupplier(companyId, {
   unitPricePerPack, supplierName,
   note, userName, status = "Entregado",
 }) {
-  const total = packCount * unitPricePerPack;
-
-  // 1. Salida de almacén — descuenta stock y queda registrada en el Historial.
-  await addWarehouseMovement(companyId, {
-    type: "salida",
-    productId: warehouseProductId, productName: warehouseProductName, sku,
-    qty: packCount,
-    fromLocationId: locationId, fromLocationName: locationName,
-    reason: `Venta a proveedor: ${supplierName}`,
-    userName,
-    packName, packQty,
+  const { data, error } = await supabase.rpc("sell_warehouse_to_supplier", {
+    p_company: companyId,
+    p_warehouse_product_id: warehouseProductId,
+    p_warehouse_product_name: warehouseProductName,
+    p_sku: sku,
+    p_description: description || "",
+    p_location_id: locationId,
+    p_location_name: locationName,
+    p_pack_count: packCount,
+    p_pack_name: packName,
+    p_pack_qty: packQty,
+    p_unit_price_per_pack: unitPricePerPack,
+    p_supplier_name: supplierName,
+    p_note: note || "",
+    p_user_name: userName,
+    p_status: status,
   });
-
-  // 2. Registro de la venta al proveedor. Guardamos también el producto, su
-  //    descripción (para el comprobante) y la ubicación de origen en el
-  //    almacén — así, si la venta se cancela más adelante, sabemos
-  //    exactamente a dónde devolver el stock.
-  return addSupplierSale(companyId, {
-    supplier: supplierName,
-    product: warehouseProductName,
-    description: description || "",
-    sku: sku || "",
-    qty: packCount, packName: packName || null, packQty: packQty || null,
-    unitPrice: unitPricePerPack, total,
-    status,
-    note: note || "",
-    warehouseProductId, locationId, locationName,
-  });
+  assertNoError(error, "sellWarehouseToSupplier");
+  return data; // id de la venta
 }
 
 export async function updateSupplierSaleStatus(companyId, saleId, status) {
-  return updateDoc(docRef(companyId, "supplierSales", saleId), {
-    status,
-    updatedAt: serverTimestamp(),
+  const { error } = await supabase
+    .from("supplier_sales")
+    .update({ status })
+    .eq("id", saleId)
+    .eq("company_id", companyId);
+  assertNoError(error, "updateSupplierSaleStatus");
+}
+
+export async function cancelSupplierSale(companyId, sale, userName) {
+  const { error } = await supabase.rpc("cancel_supplier_sale", {
+    p_company: companyId,
+    p_sale_id: sale.id,
+    p_user_name: userName,
   });
+  assertNoError(error, "cancelSupplierSale");
 }
 
 /**
- * Cancela una venta a proveedor y DEVUELVE el stock al almacén (a la misma
- * ubicación de la que salió), dejando registrada la devolución como una
- * "entrada" en el Historial del almacén.
+ * Alta directa de una venta a proveedor sin tocar almacén (no se usa desde
+ * la UI actual — sellWarehouseToSupplier es el flujo real — se deja por
+ * paridad con la función original addSupplierSale de Firestore).
  */
-export async function cancelSupplierSale(companyId, sale, userName) {
-  if (sale.status === "Cancelado") return; // ya estaba cancelada, no duplicar la devolución
-
-  if (sale.warehouseProductId && sale.locationId) {
-    await addWarehouseMovement(companyId, {
-      type: "entrada",
-      productId: sale.warehouseProductId, productName: sale.product, sku: sale.sku || "",
-      qty: sale.qty,
-      toLocationId: sale.locationId, toLocationName: sale.locationName || "",
-      reason: `Devolución por venta cancelada (${sale.supplier})`,
-      userName,
-      packName: sale.packName, packQty: sale.packQty,
-    });
-  }
-
-  return updateDoc(docRef(companyId, "supplierSales", sale.id), {
-    status: "Cancelado",
-    updatedAt: serverTimestamp(),
-  });
+export async function addSupplierSale(companyId, sale) {
+  const payload = { ...paramsToSnake(sale), company_id: companyId };
+  const { data, error } = await supabase.from("supplier_sales").insert(payload).select("id").single();
+  assertNoError(error, "addSupplierSale");
+  return data.id;
 }

@@ -10,10 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",
-    "firebase": "^12.10.0",
-    "firebase-admin": "^14.2.0",
     "jsbarcode": "^3.12.3",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.577.0",

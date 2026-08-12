@@ -1,107 +1,86 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/contexts/AuthContext.jsx
+// src/contexts/AuthContext.jsx — versión Supabase
 //
-// Métodos disponibles:
-//   login(email, password)           — correo + contraseña
-//   loginWithGoogle()                — Google OAuth popup
-//   register(email,password,name,companyName)
-//   logout() / resetPassword(email)
+// Mismo contrato público que la versión Firebase original (mismos nombres
+// de campos y funciones en el value del Provider), así que InventorySystem.jsx,
+// App.jsx, etc. no necesitan cambios.
 //
-// Para activar Google: Firebase Console → Authentication →
-//   Sign-in method → Google → Habilitar → guardar dominio autorizado.
+// CAMBIO DE ARQUITECTURA IMPORTANTE — alta de empleados:
+// En Firebase, registerEmployee() podía crear la cuenta de Auth del empleado
+// directamente desde el navegador del Dueño (usando una "app secundaria" de
+// Firebase). Supabase Auth NO tiene equivalente: crear la cuenta de OTRO
+// usuario (supabase.auth.admin.createUser) requiere la service_role key, que
+// nunca puede vivir en el navegador. Por eso registerEmployee() ahora llama
+// a un endpoint propio (api/create-employee.js) que corre en el servidor,
+// verifica que quien llama es el Dueño, y ahí sí usa el Admin SDK de
+// Supabase. Es, de hecho, más seguro que el truco anterior.
 // ─────────────────────────────────────────────────────────────────────────────
-import { createContext, useContext, useEffect, useState } from "react";
-import { initializeApp, getApp, deleteApp } from "firebase/app";
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signInWithPopup,
-  GoogleAuthProvider,
-  signOut,
-  onAuthStateChanged,
-  sendPasswordResetEmail,
-  updateProfile,
-  getAuth,
-  setPersistence,
-  inMemoryPersistence,
-} from "firebase/auth";
-import { auth } from "../firebase/config";
+import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { supabase } from "../lib/supabaseClient";
 import {
   createCompany,
   getUserProfile,
   createUserProfile,
   getCompanyProfile,
-  updateUserPermissions,
 } from "../services/firestoreService";
-import { defaultPermissions } from "../config/permissions";
 import { getCountryConfig, LEGACY_DEFAULT_CONFIG } from "../config/countryConfig";
 
-const AuthContext    = createContext(null);
-const googleProvider = new GoogleAuthProvider();
+const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null); // { uid, email, displayName, providerData... } normalizado desde session.user
   const [userProfile, setUserProfile] = useState(null);
-  const [companyId,   setCompanyId]   = useState(null);
+  const [companyId, setCompanyId] = useState(null);
   const [companyName, setCompanyName] = useState("");
-  // Moneda/pasarela de pago de la empresa, calculadas UNA vez a partir del
-  // país elegido al registrarse (ver countryConfig.js). Se exponen acá,
-  // globalmente, para que cualquier componente de la app (inventario,
-  // ventas, comprobantes, PaywallScreen…) pueda mostrar el símbolo correcto
-  // sin tener que ir a buscarlo cada uno por su cuenta. Empresas viejas sin
-  // estos campos guardados caen en LEGACY_DEFAULT_CONFIG (soles + Culqi),
-  // que es exactamente el comportamiento que ya tenían antes de este cambio.
   const [companyCurrency, setCompanyCurrency] = useState(LEGACY_DEFAULT_CONFIG);
-  const [loading,     setLoading]     = useState(true);
-  const [authError,   setAuthError]   = useState("");
+  const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
 
-  // ¿Esta cuenta inició sesión alguna vez con Google?
-  function isGoogleUser(user) {
-    return !!user.providerData?.some(p => p.providerId === "google.com");
+  function normalizeUser(sessionUser) {
+    if (!sessionUser) return null;
+    return {
+      uid: sessionUser.id,
+      email: sessionUser.email,
+      displayName: sessionUser.user_metadata?.name || sessionUser.user_metadata?.full_name || "",
+      providerData: (sessionUser.identities || []).map((i) => ({ providerId: i.provider === "google" ? "google.com" : i.provider })),
+      getIdToken: async () => (await supabase.auth.getSession()).data.session?.access_token,
+    };
   }
 
-  // Carga o crea perfil del usuario
+  function isGoogleUser(user) {
+    return !!user.providerData?.some((p) => p.providerId === "google.com");
+  }
+
   async function loadProfile(user, attempt = 0) {
     try {
       let profile = await getUserProfile(user.uid);
 
       if (!profile) {
         if (isGoogleUser(user) && attempt === 0) {
-          // Primera vez con Google: SÍ creamos la empresa automáticamente
-          // (no hay otro formulario de registro para este caso).
+          // Primera vez con Google: creamos la empresa automáticamente.
           await createCompany({
-            companyName: user.displayName
-              ? `Empresa de ${user.displayName.split(" ")[0]}`
-              : "Mi Empresa",
-            ownerUid:   user.uid,
-            ownerName:  user.displayName || "Propietario",
+            companyName: user.displayName ? `Empresa de ${user.displayName.split(" ")[0]}` : "Mi Empresa",
+            ownerUid: user.uid,
+            ownerName: user.displayName || "Propietario",
             ownerEmail: user.email,
           });
           profile = await getUserProfile(user.uid);
         } else if (attempt < 4) {
-          // Puede ser una condición de carrera: register() (correo y
-          // contraseña) puede seguir escribiendo el perfil en Firestore en
-          // este mismo instante. Reintentamos un par de veces antes de
-          // rendirnos, EN VEZ de crear una empresa nueva — esto era lo que
-          // a veces hacía que el Dueño apareciera como Empleado de una
-          // empresa vacía creada por error.
-          await new Promise(r => setTimeout(r, 600));
+          // Posible condición de carrera con register() todavía escribiendo
+          // el perfil (create_company() es una sola RPC atómica, pero puede
+          // no haber terminado de resolver cuando llega este listener).
+          await new Promise((r) => setTimeout(r, 600));
           return loadProfile(user, attempt + 1);
         } else {
-          // Después de varios intentos sigue sin existir perfil: la cuenta
-          // de Firebase Auth existe pero su perfil de Firestore fue borrado
-          // a propósito (ej. un empleado eliminado a mano desde la consola).
-          // NO se le crea una empresa nueva — se expulsa con un mensaje claro.
           setAuthError("Esta cuenta no tiene una empresa asociada. Si eras empleado, pide al Dueño que te registre de nuevo.");
-          await signOut(auth);
+          await supabase.auth.signOut();
           return;
         }
       }
 
-      // Cuenta de empleado desactivada por el Dueño → se expulsa de inmediato
       if (profile && profile.active === false) {
         setAuthError("Tu cuenta fue desactivada. Contacta al dueño de la empresa.");
-        await signOut(auth);
+        await supabase.auth.signOut();
         return;
       }
 
@@ -123,19 +102,29 @@ export function AuthProvider({ children }) {
       }
     } catch (err) {
       console.error("Error cargando perfil:", err);
-      if (err.code === "permission-denied") {
-        // Esto no significa "sin permisos asignados" — significa que las
-        // REGLAS de Firestore no coinciden con lo que la app necesita leer
-        // (users/{uid}, companies/{companyId}/...). Avisamos explícito en
-        // vez de dejar al usuario viendo el mensaje genérico de permisos.
-        setAuthError("Error de reglas de Firestore: revisa que las reglas publicadas coincidan con la estructura de la app (users/, companies/).");
-      }
-      await signOut(auth).catch(() => {});
+      // Postgrest/RLS deniega con un mensaje distinto al de Firestore, pero
+      // el mismo espíritu aplica: si esto pasa con reglas bien configuradas,
+      // es casi seguro un desajuste entre las políticas RLS publicadas y lo
+      // que la app necesita leer (tabla users/companies).
+      setAuthError("Error al leer tu perfil: revisa que las políticas RLS publicadas coincidan con el esquema de la app.");
+      await supabase.auth.signOut().catch(() => {});
     }
   }
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
+    let mounted = true;
+
+    async function bootstrap() {
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = normalizeUser(session?.user);
+      setCurrentUser(user);
+      if (user) await loadProfile(user);
+      if (mounted) setLoading(false);
+    }
+    bootstrap();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const user = normalizeUser(session?.user);
       setCurrentUser(user);
       if (user) {
         await loadProfile(user);
@@ -147,154 +136,153 @@ export function AuthProvider({ children }) {
       }
       setLoading(false);
     });
-    return unsub;
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function login(email, password) {
     setAuthError("");
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      setAuthError(friendlyError(err.code)); throw err;
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setAuthError(friendlyError(error));
+      throw error;
     }
   }
 
   async function loginWithGoogle() {
     setAuthError("");
-    try {
-      await signInWithPopup(auth, googleProvider);
-      // onAuthStateChanged → loadProfile se ejecuta automáticamente
-    } catch (err) {
-      if (err.code !== "auth/popup-closed-by-user") {
-        setAuthError(friendlyError(err.code));
-      }
-      throw err;
+    // A diferencia de signInWithPopup de Firebase, Supabase redirige la
+    // pestaña completa a Google y vuelve a `redirectTo` — no hay popup.
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) {
+      setAuthError(friendlyError(error));
+      throw error;
     }
+    // El resto (crear perfil/empresa la primera vez) ocurre en loadProfile()
+    // cuando el listener onAuthStateChange dispare tras volver del redirect.
   }
 
   async function register(email, password, name, companyNameInput, country = "PE") {
     setAuthError("");
     try {
-      const { user } = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(user, { displayName: name });
-      await createCompany({
-        companyName: companyNameInput,
-        ownerUid:    user.uid,
-        ownerName:   name,
-        ownerEmail:  email,
-        country,
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { name } },
       });
-      // Fijamos el perfil de inmediato (en vez de esperar a que el listener
-      // onAuthStateChanged lo vuelva a leer) para que no haya ninguna ventana
-      // de tiempo en la que el Dueño recién creado se vea sin perfil/rol.
-      setUserProfile({ id: user.uid, name, email, companyId: user.uid, role: "owner", active: true });
-      setCompanyId(user.uid);
-      setCompanyName(companyNameInput);
-      setCompanyCurrency(getCountryConfig(country));
+      if (error) throw error;
+      // Si la confirmación de email está DESACTIVADA en el proyecto de
+      // Supabase, signUp() ya deja una sesión activa (data.session existe) y
+      // podemos crear la empresa de inmediato. Si está ACTIVADA, no hay
+      // sesión todavía — createCompany() (que depende de auth.uid()) no
+      // podría ejecutarse hasta que el usuario confirme su correo y vuelva
+      // a iniciar sesión; en ese caso, createCompany se dispara solo la
+      // primera vez que loadProfile() corra tras el login post-confirmación
+      // (mismo mecanismo que ya cubre el caso de Google).
+      if (data.session) {
+        await createCompany({ companyName: companyNameInput, ownerUid: data.user.id, ownerName: name, ownerEmail: email, country });
+        setUserProfile({ id: data.user.id, name, email, companyId: data.user.id, role: "owner", active: true });
+        setCompanyId(data.user.id);
+        setCompanyName(companyNameInput);
+        setCompanyCurrency(getCountryConfig(country));
+      } else {
+        setAuthError("Te enviamos un correo de confirmación. Confírmalo y vuelve a iniciar sesión para terminar de crear tu empresa.");
+      }
     } catch (err) {
-      setAuthError(friendlyError(err.code)); throw err;
+      setAuthError(friendlyError(err));
+      throw err;
     }
   }
 
   /**
-   * El Dueño (o un Administrador) registra a un nuevo empleado: crea su
-   * cuenta de Firebase Auth y su perfil en Firestore con el rol asignado.
-   *
-   * IMPORTANTE: createUserWithEmailAndPassword inicia sesión automáticamente
-   * como el usuario recién creado en la instancia de Auth que se le pase.
-   * Para que el Dueño NO sea desconectado al registrar a su empleado, esta
-   * función usa una app secundaria de Firebase, exclusiva para esta
-   * operación, y la destruye apenas termina.
+   * El Dueño registra a un nuevo empleado. Llama a un endpoint del servidor
+   * (service_role) porque el cliente no puede crear la cuenta de otro
+   * usuario — ver nota de arquitectura al inicio del archivo.
    */
-  async function registerEmployee(email, password, name, permissions = defaultPermissions()) {
+  async function registerEmployee(email, password, name, permissions) {
     setAuthError("");
     if (!companyId) {
       const err = new Error("No hay una empresa activa para registrar empleados.");
       setAuthError(err.message);
       throw err;
     }
-    const secondaryApp = initializeApp(getApp().options, `Empleado-${Date.now()}`);
-    const secondaryAuth = getAuth(secondaryApp);
-    try {
-      // CRÍTICO: por defecto Firebase Auth persiste la sesión en IndexedDB,
-      // y ese almacenamiento se comparte entre TODAS las instancias de Auth
-      // del navegador (aunque sean apps distintas). Sin esta línea, la
-      // sesión del empleado recién creado "se filtra" hacia la sesión
-      // principal del Dueño y AuthContext, al no encontrar su perfil aún,
-      // termina creándole una empresa nueva y marcándolo como "owner".
-      // Con inMemoryPersistence esa sesión nunca toca el almacenamiento
-      // compartido, así que no puede filtrarse.
-      await setPersistence(secondaryAuth, inMemoryPersistence);
-      const { user } = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-      await updateProfile(user, { displayName: name });
-      // El alta SIEMPRE se crea con los permisos por defecto: firestore.rules
-      // exige esto en la creación de users/{uid} para que nadie que conozca
-      // el companyId pueda autoasignarse permisos altos al registrarse (esa
-      // escritura ocurre autenticada como el propio empleado nuevo, no como
-      // el Dueño — ver el comentario en la regla "create" de users/{uid}).
-      await createUserProfile({ uid: user.uid, name, email, companyId, role: "empleado", permissions: defaultPermissions() });
-      // Los permisos reales elegidos en el formulario se aplican acá, en un
-      // segundo paso — este updateDoc SÍ corre autenticado como el Dueño (la
-      // sesión principal, `auth`, nunca se tocó), que es el único que las
-      // reglas dejan elevar los permisos de un empleado.
-      await updateUserPermissions(user.uid, permissions);
-      return user.uid;
-    } catch (err) {
-      setAuthError(friendlyError(err.code));
-      throw err;
-    } finally {
-      // Cerrar y destruir la app secundaria; la sesión principal (el Dueño)
-      // sigue intacta en todo momento porque nunca tocamos `auth`.
-      await signOut(secondaryAuth).catch(() => {});
-      await deleteApp(secondaryApp).catch(() => {});
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch("/api/create-employee", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ email, password, name, permissions, companyId }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.ok) {
+      const message = json?.error || "No se pudo registrar al empleado.";
+      setAuthError(message);
+      throw new Error(message);
     }
+    return json.uid;
   }
 
   async function joinCompany(email, password, name, targetCompanyId) {
     setAuthError("");
     try {
-      const { user } = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(user, { displayName: name });
-      await createUserProfile({ uid: user.uid, name, email, companyId: targetCompanyId, role: "empleado", permissions: defaultPermissions() });
+      const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
+      if (error) throw error;
+      if (data.session) {
+        await createUserProfile({ uid: data.user.id, name, email, companyId: targetCompanyId, role: "empleado" });
+      } else {
+        setAuthError("Te enviamos un correo de confirmación. Confírmalo y vuelve a iniciar sesión para unirte a la empresa.");
+      }
     } catch (err) {
-      setAuthError(friendlyError(err.code)); throw err;
+      setAuthError(friendlyError(err));
+      throw err;
     }
   }
 
-  async function logout() { await signOut(auth); }
+  async function logout() {
+    await supabase.auth.signOut();
+  }
 
   async function resetPassword(email) {
     setAuthError("");
-    try {
-      await sendPasswordResetEmail(auth, email);
-    } catch (err) {
-      setAuthError(friendlyError(err.code)); throw err;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    if (error) {
+      setAuthError(friendlyError(error));
+      throw error;
     }
   }
 
-  function friendlyError(code) {
-    return ({
-      "auth/user-not-found":        "No existe una cuenta con ese correo.",
-      "auth/wrong-password":        "Contraseña incorrecta.",
-      "auth/invalid-credential":    "Correo o contraseña incorrectos.",
-      "auth/email-already-in-use":  "Ese correo ya está registrado.",
-      "auth/weak-password":         "La contraseña debe tener al menos 6 caracteres.",
-      "auth/invalid-email":         "Correo electrónico inválido.",
-      "auth/too-many-requests":     "Demasiados intentos. Intenta más tarde.",
-      "auth/network-request-failed":"Error de red. Verifica tu conexión.",
-      "auth/popup-blocked":         "El navegador bloqueó el popup. Permite pop-ups para este sitio.",
-      "auth/account-exists-with-different-credential":
-                                    "Ya hay una cuenta con ese correo usando otro método.",
-    }[code] || "Ocurrió un error. Inténtalo de nuevo.");
-  }
+  const friendlyError = useCallback((err) => {
+    const code = err?.code || err?.message || "";
+    const map = {
+      "invalid_credentials": "Correo o contraseña incorrectos.",
+      "user_already_exists": "Ese correo ya está registrado.",
+      "weak_password": "La contraseña debe tener al menos 6 caracteres.",
+      "email_not_confirmed": "Confirma tu correo antes de iniciar sesión.",
+      "over_request_rate_limit": "Demasiados intentos. Intenta más tarde.",
+    };
+    if (map[code]) return map[code];
+    if (/invalid login credentials/i.test(code)) return "Correo o contraseña incorrectos.";
+    if (/already registered/i.test(code)) return "Ese correo ya está registrado.";
+    if (/network/i.test(code)) return "Error de red. Verifica tu conexión.";
+    return "Ocurrió un error. Inténtalo de nuevo.";
+  }, []);
 
   return (
-    <AuthContext.Provider value={{
-      currentUser, userProfile, companyId, companyName, companyCurrency,
-      loading, authError, setAuthError,
-      login, loginWithGoogle, register, joinCompany, registerEmployee, logout, resetPassword,
-      setCompanyCurrency,
-    }}>
+    <AuthContext.Provider
+      value={{
+        currentUser, userProfile, companyId, companyName, companyCurrency,
+        loading, authError, setAuthError,
+        login, loginWithGoogle, register, joinCompany, registerEmployee, logout, resetPassword,
+        setCompanyCurrency,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
