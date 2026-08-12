@@ -38,10 +38,18 @@ export function AuthProvider({ children }) {
 
   function normalizeUser(sessionUser) {
     if (!sessionUser) return null;
+    const meta = sessionUser.user_metadata || {};
     return {
       uid: sessionUser.id,
       email: sessionUser.email,
-      displayName: sessionUser.user_metadata?.name || sessionUser.user_metadata?.full_name || "",
+      displayName: meta.name || meta.full_name || "",
+      // Datos "pendientes" guardados en user_metadata al momento de
+      // signUp() — sobreviven aunque el correo se confirme en otro
+      // dispositivo/navegador (a diferencia de localStorage), porque viven
+      // en el propio usuario de Supabase Auth, no en el navegador.
+      pendingCompanyName: meta.pendingCompanyName || null,
+      pendingCountry: meta.pendingCountry || null,
+      pendingJoinCompanyId: meta.pendingJoinCompanyId || null,
       providerData: (sessionUser.identities || []).map((i) => ({ providerId: i.provider === "google" ? "google.com" : i.provider })),
       getIdToken: async () => (await supabase.auth.getSession()).data.session?.access_token,
     };
@@ -51,6 +59,36 @@ export function AuthProvider({ children }) {
     return !!user.providerData?.some((p) => p.providerId === "google.com");
   }
 
+  /** Crea la empresa tolerando una segunda llamada concurrente (dos pestañas,
+   *  reintentos, StrictMode) — si ya existe (unique_violation), no falla. */
+  async function safeCreateCompany(params) {
+    try {
+      await createCompany(params);
+    } catch (err) {
+      const msg = String(err?.message || "");
+      if (!/duplicate key|already exists|23505/i.test(msg)) throw err;
+    }
+  }
+
+  /** Igual que arriba, pero para unirse como empleado a una empresa existente. */
+  async function safeCreateUserProfile(params) {
+    try {
+      await createUserProfile(params);
+    } catch (err) {
+      const msg = String(err?.message || "");
+      if (!/duplicate key|already exists|23505/i.test(msg)) throw err;
+    }
+  }
+
+  /** Limpia los campos "pending*" de user_metadata — best-effort, si falla
+   *  no es grave (en el peor caso se reintenta la próxima vez, y
+   *  safeCreateCompany/safeCreateUserProfile ya toleran ese reintento). */
+  async function clearPendingMetadata(fields) {
+    const data = {};
+    fields.forEach((f) => { data[f] = null; });
+    await supabase.auth.updateUser({ data }).catch(() => {});
+  }
+
   async function loadProfile(user, attempt = 0) {
     try {
       let profile = await getUserProfile(user.uid);
@@ -58,12 +96,38 @@ export function AuthProvider({ children }) {
       if (!profile) {
         if (isGoogleUser(user) && attempt === 0) {
           // Primera vez con Google: creamos la empresa automáticamente.
-          await createCompany({
+          await safeCreateCompany({
             companyName: user.displayName ? `Empresa de ${user.displayName.split(" ")[0]}` : "Mi Empresa",
             ownerUid: user.uid,
             ownerName: user.displayName || "Propietario",
             ownerEmail: user.email,
           });
+          profile = await getUserProfile(user.uid);
+        } else if (user.pendingCompanyName && attempt === 0) {
+          // register() con confirmación de correo ACTIVADA: en el momento del
+          // signUp() no había sesión todavía, así que la empresa no se pudo
+          // crear ahí. Ahora que el usuario confirmó su correo y ya tiene
+          // sesión real, terminamos de crearla con los datos que quedaron
+          // guardados en user_metadata desde register().
+          await safeCreateCompany({
+            companyName: user.pendingCompanyName,
+            ownerUid: user.uid,
+            ownerName: user.displayName || "Propietario",
+            ownerEmail: user.email,
+            country: user.pendingCountry || "PE",
+          });
+          await clearPendingMetadata(["pendingCompanyName", "pendingCountry"]);
+          profile = await getUserProfile(user.uid);
+        } else if (user.pendingJoinCompanyId && attempt === 0) {
+          // Mismo caso, pero para joinCompany() (empleado auto-invitado).
+          await safeCreateUserProfile({
+            uid: user.uid,
+            name: user.displayName,
+            email: user.email,
+            companyId: user.pendingJoinCompanyId,
+            role: "empleado",
+          });
+          await clearPendingMetadata(["pendingJoinCompanyId"]);
           profile = await getUserProfile(user.uid);
         } else if (attempt < 4) {
           // Posible condición de carrera con register() todavía escribiendo
@@ -171,28 +235,29 @@ export function AuthProvider({ children }) {
   async function register(email, password, name, companyNameInput, country = "PE") {
     setAuthError("");
     try {
+      // pendingCompanyName/pendingCountry quedan en user_metadata (server-side,
+      // en Supabase Auth) para que, si la confirmación de correo está
+      // ACTIVADA y todavía no hay sesión, loadProfile() pueda terminar de
+      // crear la empresa apenas el usuario confirme el correo e inicie
+      // sesión — sin importar en qué dispositivo/navegador confirme.
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } },
+        options: { data: { name, pendingCompanyName: companyNameInput, pendingCountry: country } },
       });
       if (error) throw error;
-      // Si la confirmación de email está DESACTIVADA en el proyecto de
-      // Supabase, signUp() ya deja una sesión activa (data.session existe) y
-      // podemos crear la empresa de inmediato. Si está ACTIVADA, no hay
-      // sesión todavía — createCompany() (que depende de auth.uid()) no
-      // podría ejecutarse hasta que el usuario confirme su correo y vuelva
-      // a iniciar sesión; en ese caso, createCompany se dispara solo la
-      // primera vez que loadProfile() corra tras el login post-confirmación
-      // (mismo mecanismo que ya cubre el caso de Google).
       if (data.session) {
+        // Confirmación de correo DESACTIVADA: ya hay sesión, creamos la
+        // empresa de inmediato y limpiamos el "pendiente" que acabamos de
+        // guardar (ya no hace falta, se usó al toque).
         await createCompany({ companyName: companyNameInput, ownerUid: data.user.id, ownerName: name, ownerEmail: email, country });
+        await clearPendingMetadata(["pendingCompanyName", "pendingCountry"]);
         setUserProfile({ id: data.user.id, name, email, companyId: data.user.id, role: "owner", active: true });
         setCompanyId(data.user.id);
         setCompanyName(companyNameInput);
         setCompanyCurrency(getCountryConfig(country));
       } else {
-        setAuthError("Te enviamos un correo de confirmación. Confírmalo y vuelve a iniciar sesión para terminar de crear tu empresa.");
+        setAuthError("Te enviamos un correo de confirmación. Confírmalo y vuelve a iniciar sesión — terminaremos de crear tu empresa automáticamente.");
       }
     } catch (err) {
       setAuthError(friendlyError(err));
@@ -230,10 +295,14 @@ export function AuthProvider({ children }) {
   async function joinCompany(email, password, name, targetCompanyId) {
     setAuthError("");
     try {
-      const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name } } });
+      const { data, error } = await supabase.auth.signUp({
+        email, password,
+        options: { data: { name, pendingJoinCompanyId: targetCompanyId } },
+      });
       if (error) throw error;
       if (data.session) {
         await createUserProfile({ uid: data.user.id, name, email, companyId: targetCompanyId, role: "empleado" });
+        await clearPendingMetadata(["pendingJoinCompanyId"]);
       } else {
         setAuthError("Te enviamos un correo de confirmación. Confírmalo y vuelve a iniciar sesión para unirte a la empresa.");
       }
