@@ -117,6 +117,7 @@ async function migrateCompany(companyDoc) {
       id: newId, company_id: companyId,
       name: p.name, sku: p.sku, description: p.description, category: p.category,
       price: p.price || 0, cost: p.cost || 0, stock: p.stock || 0, min_stock: p.minStock || 0,
+      pack_qty: p.packQty || null, barcode: p.barcode || null,
       status: p.status || "En Stock",
       created_at: iso(p.createdAt) || new Date().toISOString(),
     });
@@ -146,7 +147,8 @@ async function migrateCompany(companyDoc) {
     supplierIdMap.set(sDoc.id, newId);
     await supabase.from("suppliers").insert({
       id: newId, company_id: companyId,
-      name: s.name, contact_name: s.contactName, phone: s.phone, email: s.email, address: s.address, notes: s.notes,
+      name: s.name, contact: s.contact ?? s.contactName ?? null, phone: s.phone, email: s.email, address: s.address, notes: s.notes,
+      ruc: s.ruc || null, status: s.status || "Activo", products: s.products || [],
       total_orders: s.totalOrders || 0, total_spent: s.totalSpent || 0, last_order: s.lastOrder || "—",
       created_at: iso(s.createdAt) || new Date().toISOString(),
     });
@@ -179,6 +181,7 @@ async function migrateCompany(companyDoc) {
     locationIdMap.set(lDoc.id, newId);
     await supabase.from("warehouse_locations").insert({
       id: newId, company_id: companyId, name: l.name, description: l.description || null,
+      type: l.type || "Zona", code: l.code || null,
       created_at: iso(l.createdAt) || new Date().toISOString(),
     });
   }
@@ -194,6 +197,7 @@ async function migrateCompany(companyDoc) {
     await supabase.from("warehouse_products").insert({
       id: newId, company_id: companyId, name: w.name, sku: w.sku || null, description: w.description || null,
       pack_name: w.packName || null, pack_qty: w.packQty || null,
+      unit_price: w.unitPrice || null, cost: w.cost || null,
       created_at: iso(w.createdAt) || new Date().toISOString(),
     });
   }
