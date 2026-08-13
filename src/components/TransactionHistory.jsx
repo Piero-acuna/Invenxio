@@ -491,10 +491,14 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         <div className="text-center py-10 text-slate-600 text-sm">Sin registros</div>
       ) : (
         <div className="rounded-xl border border-slate-700/50 overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* max-h + overflow-y-auto: con el historial completo (ventas +
+              compras + almacén) esto puede crecer mucho — scrollea adentro
+              de su recuadro en vez de amontonarse con el resto de la
+              pantalla. thead sticky para no perder las columnas. */}
+          <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
             <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-slate-800/80 border-b border-slate-700">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-slate-800 border-b border-slate-700">
                   {(canViewFinance
                     ? ["Fuente","Tipo","Fecha","Producto / SKU","Cant.","Total","Detalle",""]
                     : ["Fuente","Tipo","Fecha","Producto / SKU","Cant.","Detalle",""]

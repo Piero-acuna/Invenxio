@@ -397,7 +397,11 @@ function EquipoTab({
         {loading ? (
           <div className="flex justify-center py-4"><RefreshCw size={16} className="animate-spin text-slate-500" /></div>
         ) : (
-          <div className="space-y-2">
+          // max-h + overflow-y-auto SOLO en la lista (no en todo el panel):
+          // así, con muchos empleados, el botón "Registrar Empleado" de
+          // arriba se queda siempre visible en vez de perderse al scrollear
+          // buscando un empleado más abajo.
+          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
             {employees.map(emp => (
               <EmployeeRow
                 key={emp.uid}

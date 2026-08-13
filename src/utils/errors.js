@@ -130,3 +130,36 @@ export function logAndGetErrorMessage(err, context, fallback = DEFAULT_FALLBACK)
   console.error(context, err);
   return getErrorMessage(err, fallback);
 }
+
+/**
+ * Lee la respuesta de un `fetch()` a nuestros propios endpoints de /api de
+ * forma segura, sin asumir que el body es JSON válido.
+ *
+ * POR QUÉ EXISTE: nuestros endpoints (`api/*.js`) siempre devuelven JSON,
+ * incluso cuando fallan (`res.status(500).json({ ok:false, error:"..." })`).
+ * PERO si la función serverless se cae ANTES de llegar a ese try/catch (por
+ * ejemplo: variables de entorno mal configuradas en Vercel, un timeout, o
+ * cualquier crash a nivel de plataforma), Vercel devuelve su propia página
+ * de error genérica — texto plano tipo "A server error has occurred", que
+ * NO es JSON. Si el código hace `await res.json()` directo sobre eso,
+ * revienta con un `SyntaxError: Unexpected token 'A', "A server e"... is
+ * not valid JSON` — un mensaje que no dice nada útil sobre qué pasó
+ * realmente (y es especialmente grave en un flujo de pago: el usuario no
+ * sabe si le cobraron o no).
+ *
+ * Esta función intenta el parseo y, si falla, arma un mensaje claro en
+ * español a partir del status HTTP, y deja el texto crudo de la respuesta
+ * en consola para depurar (ahí sí se ve el error real que Vercel escondió).
+ */
+export async function parseJsonResponse(res) {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    console.error(`[fetch] Respuesta no-JSON de ${res.url} (HTTP ${res.status}):`, raw.slice(0, 500));
+    if (res.status >= 500) {
+      throw new Error("El servidor tuvo un problema al procesar la solicitud. Intenta de nuevo en unos segundos — si persiste, avísanos.");
+    }
+    throw new Error(`Respuesta inesperada del servidor (HTTP ${res.status}).`);
+  }
+}

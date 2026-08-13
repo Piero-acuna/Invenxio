@@ -24,6 +24,7 @@ import {
   getCompanyProfile,
 } from "../services/firestoreService";
 import { getCountryConfig, LEGACY_DEFAULT_CONFIG } from "../config/countryConfig";
+import { parseJsonResponse } from "../utils/errors";
 
 const AuthContext = createContext(null);
 
@@ -283,7 +284,7 @@ export function AuthProvider({ children }) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
       body: JSON.stringify({ email, password, name, permissions, companyId }),
     });
-    const json = await res.json();
+    const json = await parseJsonResponse(res);
     if (!res.ok || !json.ok) {
       const message = json?.error || "No se pudo registrar al empleado.";
       setAuthError(message);

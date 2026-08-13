@@ -230,9 +230,14 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
       {/* Table */}
       {loadingP ? <Spinner /> : (
         <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* max-h + overflow-y-auto: con muchos productos la tabla scrollea
+              adentro de su propio recuadro en vez de estirar toda la página
+              (que se veía "amontonada" al mezclarse con el resto de la UI).
+              El thead queda sticky arriba para no perder las columnas al
+              bajar. */}
+          <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-slate-800">
                 <tr className="border-b border-slate-700/80">
                   <th className="text-left py-3 px-4 text-xs text-slate-400 uppercase tracking-wider">SKU</th>
                   <th className="text-left py-3 px-4 text-xs text-slate-400 uppercase tracking-wider">Producto</th>

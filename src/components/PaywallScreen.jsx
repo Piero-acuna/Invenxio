@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useRef } from "react";
 import { Lock, CreditCard, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
-import { logAndGetErrorMessage } from "../utils/errors";
+import { logAndGetErrorMessage, parseJsonResponse } from "../utils/errors";
 
 const CULQI_SCRIPT_URL = "https://checkout.culqi.com/js/v4";
 const PLAN_AMOUNT_SOLES = 57.99; // S/ 57.99 al mes (Culqi/Perú) — ajusta a tu precio real
@@ -96,7 +96,7 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({ companyId, returnUrl: window.location.href }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse(res);
       if (!res.ok || !data.ok || !data.initPoint) {
         throw new Error(data.error || "No se pudo iniciar el pago con Mercado Pago.");
       }
@@ -144,7 +144,7 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
             body: JSON.stringify({ token, companyId }),
           });
-          const data = await res.json();
+          const data = await parseJsonResponse(res);
           if (!res.ok || !data.ok) throw new Error(data.error || "El cobro no se pudo confirmar.");
           setStatus("success");
           // No hace falta recargar nada: el listener de suscripción en
