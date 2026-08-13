@@ -1,18 +1,27 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // api/grant-access.js
 // Endpoint administrativo para conceder días de cortesía a una empresa.
+//
+// NOTA DE MIGRACIÓN: usaba firebase-admin/Firestore (paquete que ni siquiera
+// está en package.json, así que no podía desplegarse). Se migró a
+// api/_supabaseAdmin.js, escribiendo en public.subscriptions con el cliente
+// service_role (bypasea RLS, igual que hacían los otros backends de pago).
 // ─────────────────────────────────────────────────────────────────────────────
+import { timingSafeEqual } from "crypto";
+import { supabaseAdmin } from "./_supabaseAdmin";
 
-import {
-  cert,
-  getApps,
-  initializeApp,
-} from "firebase-admin/app";
-
-import {
-  FieldValue,
-  getFirestore,
-} from "firebase-admin/firestore";
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  // Buffers de distinto largo no se pueden comparar con timingSafeEqual
+  // directamente — igual retornamos false, pero sin filtrar el largo real
+  // comparando contra sí mismo primero (evita "early return" visible).
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -22,7 +31,8 @@ export default async function handler(req, res) {
     });
   }
 
-  // 1. Validar secreto administrativo
+  // 1. Validar secreto administrativo (comparación en tiempo constante para
+  //    no filtrar información por timing).
   const authHeader = req.headers.authorization || "";
 
   const providedSecret = authHeader.startsWith("Bearer ")
@@ -38,7 +48,7 @@ export default async function handler(req, res) {
     });
   }
 
-  if (providedSecret !== process.env.ADMIN_SECRET) {
+  if (!providedSecret || !safeEqual(providedSecret, process.env.ADMIN_SECRET)) {
     return res.status(401).json({
       ok: false,
       error: "No autorizado.",
@@ -46,12 +56,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 2. Verificar variables de Firebase
-    const requiredVariables = [
-      "FIREBASE_PROJECT_ID",
-      "FIREBASE_CLIENT_EMAIL",
-      "FIREBASE_PRIVATE_KEY",
-    ];
+    // 2. Verificar variables de Supabase
+    const requiredVariables = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
 
     const missingVariables = requiredVariables.filter(
       (variable) => !process.env[variable]
@@ -66,46 +72,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Preparar clave privada
-    let privateKey = process.env.FIREBASE_PRIVATE_KEY.trim();
-
-    // Eliminar comillas que pudieron copiarse desde el JSON
-    if (
-      (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
-      (privateKey.startsWith("'") && privateKey.endsWith("'"))
-    ) {
-      privateKey = privateKey.slice(1, -1);
-    }
-
-    // Convertir los caracteres literales \n en saltos de línea reales
-    privateKey = privateKey
-      .replace(/\\n/g, "\n")
-      .trim();
-
-    if (
-      !privateKey.includes("-----BEGIN PRIVATE KEY-----") ||
-      !privateKey.includes("-----END PRIVATE KEY-----")
-    ) {
-      return res.status(500).json({
-        ok: false,
-        error:
-          "FIREBASE_PRIVATE_KEY no tiene el formato PEM correcto. " +
-          "Debe contener BEGIN PRIVATE KEY y END PRIVATE KEY.",
-      });
-    }
-
-    // 4. Inicializar Firebase Admin una sola vez
-    if (getApps().length === 0) {
-      initializeApp({
-        credential: cert({
-          projectId: process.env.FIREBASE_PROJECT_ID.trim(),
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL.trim(),
-          privateKey,
-        }),
-      });
-    }
-
-    // 5. Leer y validar body
+    // 3. Leer y validar body
     let body = req.body;
 
     if (typeof body === "string") {
@@ -120,9 +87,7 @@ export default async function handler(req, res) {
     }
 
     const companyId =
-      typeof body?.companyId === "string"
-        ? body.companyId.trim()
-        : "";
+      typeof body?.companyId === "string" ? body.companyId.trim() : "";
 
     const dias = Number(body?.dias);
 
@@ -133,13 +98,6 @@ export default async function handler(req, res) {
       });
     }
 
-    if (companyId.includes("/")) {
-      return res.status(400).json({
-        ok: false,
-        error: "companyId contiene caracteres no permitidos.",
-      });
-    }
-
     if (!Number.isInteger(dias) || dias <= 0) {
       return res.status(400).json({
         ok: false,
@@ -147,39 +105,38 @@ export default async function handler(req, res) {
       });
     }
 
-    // 6. Buscar suscripción
-    const db = getFirestore();
+    // 4. Buscar suscripción existente
+    const admin = supabaseAdmin();
 
-    const subscriptionPath =
-      `companies/${companyId}/meta/subscription`;
+    const { data: subscription, error: fetchErr } = await admin
+      .from("subscriptions")
+      .select("company_id")
+      .eq("company_id", companyId)
+      .maybeSingle();
 
-    const subscriptionRef = db.doc(subscriptionPath);
-    const subscriptionSnapshot = await subscriptionRef.get();
+    if (fetchErr) throw fetchErr;
 
-    if (!subscriptionSnapshot.exists) {
+    if (!subscription) {
       return res.status(404).json({
         ok: false,
-        error: `No existe ${subscriptionPath}.`,
+        error: `No existe una suscripción para la empresa ${companyId}.`,
       });
     }
 
-    // 7. Calcular nueva fecha
-    const paidUntil = new Date(
-      Date.now() + dias * 24 * 60 * 60 * 1000
-    );
+    // 5. Calcular nueva fecha y actualizar
+    const paidUntil = new Date(Date.now() + dias * 24 * 60 * 60 * 1000);
 
-    // 8. Actualizar Firestore
-    await subscriptionRef.set(
-      {
+    const { error: updateErr } = await admin
+      .from("subscriptions")
+      .update({
         status: "active",
         plan: "cortesia",
-        paidUntil: paidUntil.toISOString(),
-        grantedManuallyAt: FieldValue.serverTimestamp(),
-      },
-      {
-        merge: true,
-      }
-    );
+        paid_until: paidUntil.toISOString(),
+        granted_manually_at: new Date().toISOString(),
+      })
+      .eq("company_id", companyId);
+
+    if (updateErr) throw updateErr;
 
     return res.status(200).json({
       ok: true,

@@ -56,7 +56,7 @@ begin
     raise exception 'No autenticado.';
   end if;
 
-  if v_country = 'PE' then
+  if p_country = 'PE' then
     v_gateway := 'culqi'; v_currency_code := 'PEN'; v_currency_symbol := 'S/';
   else
     v_gateway := 'mercadopago'; v_currency_code := 'USD'; v_currency_symbol := '$';

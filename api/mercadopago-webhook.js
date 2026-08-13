@@ -14,27 +14,21 @@
 // nuestra llave secreta) cuál es el estado REAL de ese pago — solo si esa
 // respuesta dice "approved" se marca la empresa como pagada.
 //
+// NOTA DE MIGRACIÓN: igual que los otros 2 endpoints de pago, este usaba
+// Firebase Admin + Firestore. Se actualizó a api/_supabaseAdmin.js — escribe
+// en public.subscriptions con el cliente service_role, que bypasea RLS
+// (0002_rls.sql no deja escribir esa tabla a ningún usuario normal).
+//
 // VARIABLES DE ENTORNO QUE NECESITA (Vercel → Settings → Environment
 // Variables — nunca en un archivo del repo):
-//   MP_ACCESS_TOKEN         → mismo Access Token que mercadopago-preference.js
-//   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
-//                             → mismas 3 variables que usa api/culqi-charge.js
+//   MP_ACCESS_TOKEN                          → mismo Access Token que mercadopago-preference.js
+//   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY → las mismas que usa api/_supabaseAdmin.js
 //
 // Configuración en Mercado Pago: Tus integraciones → tu app → Webhooks →
 // URL de producción → https://TU-DOMINIO.vercel.app/api/mercadopago-webhook
 // → eventos "Pagos".
 // ─────────────────────────────────────────────────────────────────────────────
-import admin from "firebase-admin";
-
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId:  process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
-    }),
-  });
-}
+import { supabaseAdmin } from "./_supabaseAdmin";
 
 const PLAN_DAYS = 30;
 
@@ -95,16 +89,24 @@ export default async function handler(req, res) {
     // 2. Pago confirmado de verdad → recién ACÁ se marca la empresa como
     //    pagada, 30 días desde ahora. Igual que en culqi-charge.js.
     const paidUntil = new Date(Date.now() + PLAN_DAYS * 24 * 60 * 60 * 1000);
-    await admin.firestore()
-      .doc(`companies/${companyId}/meta/subscription`)
-      .set({
+    const admin = supabaseAdmin();
+    const { error: upsertErr } = await admin.from("subscriptions").upsert(
+      {
+        company_id: companyId,
         status: "active",
         plan: "monthly",
-        paidUntil: paidUntil.toISOString(),
-        lastPaymentAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastChargeId: String(payment.id),
-        paymentGateway: "mercadopago",
-      }, { merge: true });
+        paid_until: paidUntil.toISOString(),
+        last_payment_at: new Date().toISOString(),
+        last_charge_id: String(payment.id),
+        payment_gateway: "mercadopago",
+        currency_code: "USD",
+      },
+      { onConflict: "company_id" }
+    );
+    if (upsertErr) {
+      console.error("mercadopago-webhook: error escribiendo subscripción", upsertErr);
+      return res.status(200).json({ ok: false }); // 200 igual, para no generar reintentos infinitos
+    }
 
     return res.status(200).json({ ok: true });
   } catch (err) {

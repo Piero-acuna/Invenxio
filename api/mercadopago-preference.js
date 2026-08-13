@@ -10,30 +10,24 @@
 //
 // IMPORTANTE: este endpoint NO marca ninguna empresa como pagada. Solo abre
 // el checkout. La confirmación real del pago (y la única escritura a
-// companies/{id}/meta/subscription) ocurre en api/mercadopago-webhook.js,
-// cuando Mercado Pago avisa que el pago fue aprobado — nunca antes, y nunca
+// public.subscriptions) ocurre en api/mercadopago-webhook.js, cuando
+// Mercado Pago avisa que el pago fue aprobado — nunca antes, y nunca
 // confiando en lo que vuelva del navegador del usuario.
+//
+// NOTA DE MIGRACIÓN: igual que culqi-charge.js, este endpoint usaba Firebase
+// Admin (firebase-admin, que no está instalado en package.json) solo para
+// verificar el token de sesión. Se actualizó a api/_supabaseAdmin.js, que
+// verifica el JWT de Supabase Auth del usuario.
 //
 // VARIABLES DE ENTORNO QUE NECESITA (Vercel → Settings → Environment
 // Variables — nunca en un archivo del repo):
-//   MP_ACCESS_TOKEN         → Access Token de producción de tu cuenta
-//                             Mercado Pago (Tus integraciones → Credenciales)
-//   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
-//                             → mismas 3 variables que usa api/culqi-charge.js,
-//                               solo para verificar el token de sesión del
-//                               usuario (no se escribe nada en Firestore acá).
+//   MP_ACCESS_TOKEN                          → Access Token de producción de tu cuenta
+//                                               Mercado Pago (Tus integraciones → Credenciales)
+//   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY → las mismas que usa api/_supabaseAdmin.js,
+//                                               solo para verificar el token de sesión del
+//                                               usuario (no se escribe nada en la base acá).
 // ─────────────────────────────────────────────────────────────────────────────
-import admin from "firebase-admin";
-
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId:  process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
-    }),
-  });
-}
+import { verifyBearerToken } from "./_supabaseAdmin";
 
 const PLAN_AMOUNT_USD = 39.99; // $ 39.99 — debe coincidir con PLAN_AMOUNT_USD de PaywallScreen.jsx
 
@@ -45,17 +39,13 @@ export default async function handler(req, res) {
   try {
     // 1. Verificar identidad, igual que en culqi-charge.js: nunca confiamos
     //    en companyId solo porque vino en el body.
-    const authHeader = req.headers.authorization || "";
-    const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (!idToken) return res.status(401).json({ ok: false, error: "Falta autenticación." });
-
-    const decoded = await admin.auth().verifyIdToken(idToken);
+    const caller = await verifyBearerToken(req);
     const { companyId, returnUrl } = req.body || {};
 
     if (!companyId) {
       return res.status(400).json({ ok: false, error: "Falta companyId." });
     }
-    if (decoded.uid !== companyId) {
+    if (caller.id !== companyId) {
       return res.status(403).json({ ok: false, error: "No puedes pagar la suscripción de otra empresa." });
     }
     if (!process.env.MP_ACCESS_TOKEN) {
@@ -87,7 +77,7 @@ export default async function handler(req, res) {
           currency_id: "USD",
           unit_price: PLAN_AMOUNT_USD,
         }],
-        payer: { email: decoded.email || undefined },
+        payer: { email: caller.email || undefined },
         external_reference: companyId,
         back_urls: {
           success: backUrl,
@@ -107,7 +97,8 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ ok: true, initPoint: preference.init_point });
   } catch (err) {
+    const status = err.status || 500;
     console.error("mercadopago-preference error:", err);
-    return res.status(500).json({ ok: false, error: "Error interno al iniciar el pago." });
+    return res.status(status).json({ ok: false, error: "Error interno al iniciar el pago." });
   }
 }
