@@ -113,7 +113,13 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
         msg = `Costo de referencia registrado: ${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}.`;
       } else if (Math.round(storedCost * 100) !== Math.round(cost * 100)) {
         const newName = `${pForm.product.name} (${formatMoney(cost, currencySymbol)})`;
-        const newRef  = await addWarehouseProduct(companyId, {
+        // addWarehouseProduct devuelve el id (string) del nuevo producto, no
+        // un objeto — antes se leía `newRef.id` (undefined en un string), lo
+        // que mandaba p_warehouse_product_id vacío a record_warehouse_purchase
+        // y Postgres respondía "Could not find the function... in the schema
+        // cache" (parecía un problema de la base de datos, pero era este id
+        // vacío).
+        const newProductId = await addWarehouseProduct(companyId, {
           name: newName,
           sku: pForm.product.sku || "",
           description: pForm.product.description || "",
@@ -122,7 +128,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
           unitPrice: pForm.product.unitPrice || null,
           cost,
         });
-        targetProduct = { id: newRef.id, name: newName, sku: pForm.product.sku, description: pForm.product.description, packName: pForm.product.packName, packQty: pForm.product.packQty };
+        targetProduct = { id: newProductId, name: newName, sku: pForm.product.sku, description: pForm.product.description, packName: pForm.product.packName, packQty: pForm.product.packQty };
         msg = `⚠️ El costo ingresado (${formatMoney(cost, currencySymbol)}) no coincide con el registrado para "${pForm.product.name}" (${formatMoney(storedCost, currencySymbol)}). Se creó un nuevo producto de almacén: "${newName}" y la compra se registró ahí.`;
       } else {
         msg = `✅ El costo coincide con el registrado (${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}).`;

@@ -82,17 +82,29 @@ export const uniqueChannelName = (base) => `${base}:${Date.now()}:${channelSeq++
  * onData, orderField) → unsubscribe().
  */
 export function subscribeToCollection(companyId, table, onData, orderField = "createdAt") {
+  // BUG QUE ESTO EVITA: los módulos llaman a este hook con el mismo nombre
+  // "camelCase" que usaba la colección de Firestore (ej. "supplierSales",
+  // "warehouseMovements"), pero las tablas reales en Postgres están en
+  // snake_case ("supplier_sales", "warehouse_movements") — nombres de tabla
+  // distintos no son lo mismo que nombres de COLUMNA distintos: Postgres no
+  // hace ningún tipo de match insensible a mayúsculas/guiones bajos para
+  // relaciones. Sin esta conversión, `.from("supplierSales")` fallaba con
+  // "relation does not exist", el catch silencioso de abajo solo hacía
+  // console.error sin llamar a onData(), y el `loading` del hook useCollection
+  // se quedaba en `true` para siempre — eso es lo que colgaba el Dashboard
+  // (ver loadingSS en DashboardModule.jsx).
+  const tableName = camelToSnakeStr(table);
   const orderCol = camelToSnakeStr(orderField);
   let cancelled = false;
 
   async function fetchAll() {
     const { data, error } = await supabase
-      .from(table)
+      .from(tableName)
       .select("*")
       .eq("company_id", companyId)
       .order(orderCol, { ascending: false });
     if (error) {
-      console.error(`[supabase] subscribeToCollection(${table}):`, error);
+      console.error(`[supabase] subscribeToCollection(${tableName}):`, error);
       return;
     }
     if (!cancelled) onData(rowsToCamel(data));
@@ -101,10 +113,10 @@ export function subscribeToCollection(companyId, table, onData, orderField = "cr
   fetchAll();
 
   const channel = supabase
-    .channel(uniqueChannelName(`${table}:${companyId}`))
+    .channel(uniqueChannelName(`${tableName}:${companyId}`))
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table, filter: `company_id=eq.${companyId}` },
+      { event: "*", schema: "public", table: tableName, filter: `company_id=eq.${companyId}` },
       () => fetchAll()
     )
     .subscribe();

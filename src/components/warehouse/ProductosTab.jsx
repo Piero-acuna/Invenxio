@@ -65,12 +65,17 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
       if (editItem) {
         await updateWarehouseProduct(companyId, editItem.id, payload);
       } else {
-        const ref = await addWarehouseProduct(companyId, payload);
+        // addWarehouseProduct devuelve el id (string) del nuevo producto, no
+        // un objeto — antes se leía `ref.id` (undefined en un string), lo que
+        // mandaba p_product_id vacío a la RPC y Postgres respondía "Could not
+        // find the function... in the schema cache" (parecía un problema de
+        // la base de datos, pero era este id vacío).
+        const newProductId = await addWarehouseProduct(companyId, payload);
         // Stock inicial: siempre junto con la creación, contado en empaques.
         const loc = locations.find(l => l.id === form.locationId);
         await addWarehouseMovement(companyId, {
           type: "entrada",
-          productId: ref.id, productName: payload.name, sku: payload.sku,
+          productId: newProductId, productName: payload.name, sku: payload.sku,
           qty: Number(form.packCount),
           toLocationId: form.locationId, toLocationName: loc?.name || "",
           reason: "Stock inicial",
