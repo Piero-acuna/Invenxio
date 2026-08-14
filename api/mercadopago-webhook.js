@@ -28,7 +28,7 @@
 // URL de producción → https://TU-DOMINIO.vercel.app/api/mercadopago-webhook
 // → eventos "Pagos".
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabaseAdmin } from "./_supabaseAdmin";
+import { supabaseAdmin } from "./_supabaseAdmin.js";
 
 const PLAN_DAYS = 30;
 

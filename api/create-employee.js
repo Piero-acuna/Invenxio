@@ -23,7 +23,7 @@
 // perfil, el mismo tipo de estado inconsistente que el comentario original
 // de firestore.rules ya advertía que podía pasar por condiciones de carrera.
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabaseAdmin, verifyBearerToken } from "./_supabaseAdmin";
+import { supabaseAdmin, verifyBearerToken } from "./_supabaseAdmin.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

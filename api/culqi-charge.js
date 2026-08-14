@@ -29,7 +29,7 @@
 //   CULQI_SECRET_KEY          → la Llave Secreta de tu cuenta Culqi (sk_live_… o sk_test_…)
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY → las mismas que usa api/_supabaseAdmin.js
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabaseAdmin, verifyBearerToken } from "./_supabaseAdmin";
+import { supabaseAdmin, verifyBearerToken } from "./_supabaseAdmin.js";
 
 const PLAN_AMOUNT_CENTS = 5799; // S/ 57.99 — debe coincidir con PLAN_AMOUNT_CENTS de PaywallScreen.jsx
 const PLAN_DAYS = 30;

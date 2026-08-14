@@ -8,7 +8,7 @@
 // service_role (bypasea RLS, igual que hacían los otros backends de pago).
 // ─────────────────────────────────────────────────────────────────────────────
 import { timingSafeEqual } from "crypto";
-import { supabaseAdmin } from "./_supabaseAdmin";
+import { supabaseAdmin } from "./_supabaseAdmin.js";
 
 function safeEqual(a, b) {
   const bufA = Buffer.from(String(a));

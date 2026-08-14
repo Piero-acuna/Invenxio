@@ -27,7 +27,7 @@
 //                                               solo para verificar el token de sesión del
 //                                               usuario (no se escribe nada en la base acá).
 // ─────────────────────────────────────────────────────────────────────────────
-import { verifyBearerToken } from "./_supabaseAdmin";
+import { verifyBearerToken } from "./_supabaseAdmin.js";
 
 const PLAN_AMOUNT_USD = 39.99; // $ 39.99 — debe coincidir con PLAN_AMOUNT_USD de PaywallScreen.jsx
 
