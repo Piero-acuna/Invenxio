@@ -288,6 +288,8 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       generateInvoicePDF({
         billing,
         docType:     isVenta ? "VENTA" : "PROVEEDOR",
+        operationType: (isVenta || isVentaProveedor) ? "venta" : "compra",
+        date:        raw.date || t.date,
         partyLabel:  isVenta ? "Cliente" : "Proveedor",
         partyName:   t.party || "—",
         items,

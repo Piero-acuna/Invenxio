@@ -39,7 +39,7 @@ function loadCulqiScript() {
   });
 }
 
-export default function PaywallScreen({ isOwner, companyId, companyName, getIdToken, reason, paymentGateway = "culqi" }) {
+export default function PaywallScreen({ isOwner, companyId, companyName, getIdToken, reason, paymentGateway = "culqi", embedded = false }) {
   const [status, setStatus] = useState("idle"); // idle | loading-widget | charging | error | success
   const [errorMsg, setErrorMsg] = useState("");
   const callbackRef = useRef(null);
@@ -162,6 +162,51 @@ export default function PaywallScreen({ isOwner, companyId, companyName, getIdTo
       setStatus("error");
       setErrorMsg(logAndGetErrorMessage(e, "Error al abrir ventana de pago:", "No se pudo abrir la ventana de pago."));
     }
+  }
+
+  // ── Versión "embebida" (compacta) ────────────────────────────────────────
+  // Se usa dentro de RolePanel → Mis Datos → Suscripción, para pagar/renovar
+  // SIN estar bloqueado todavía (ej. pagar por adelantado, o revisar el
+  // estado). Reutiliza exactamente la misma lógica de arriba (handlePay,
+  // handlePayMercadoPago, los mismos estados) — solo cambia el envoltorio
+  // visual: sin el candado grande ni el mensaje de "tu prueba terminó", que
+  // no tendrían sentido si la cuenta todavía tiene acceso.
+  if (embedded) {
+    if (!isOwner) {
+      return <p className="text-[11px] text-slate-500">Solo el Dueño puede pagar la suscripción.</p>;
+    }
+    return (
+      <div className="w-full">
+        {status === "success" || status === "charging" ? (
+          <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold py-1.5">
+            {status === "charging" ? <Loader2 size={14} className="animate-spin flex-shrink-0" /> : <CheckCircle2 size={14} className="flex-shrink-0" />}
+            <span>{status === "charging" ? "Confirmando pago…" : "¡Pago confirmado! Actualizando acceso…"}</span>
+          </div>
+        ) : (
+          <button
+            onClick={paymentGateway === "mercadopago" ? handlePayMercadoPago : handlePay}
+            disabled={status === "loading-widget"}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 disabled:cursor-wait text-slate-900 font-bold text-xs rounded-lg transition-colors"
+          >
+            {status === "loading-widget"
+              ? <Loader2 size={14} className="animate-spin flex-shrink-0" />
+              : <CreditCard size={14} className="flex-shrink-0" />}
+            <span className="truncate">
+              {paymentGateway === "mercadopago" ? `Pagar $ ${PLAN_AMOUNT_USD} / mes` : `Pagar S/ ${PLAN_AMOUNT_SOLES}.00 / mes`}
+            </span>
+          </button>
+        )}
+        {errorMsg && (
+          <div className="flex items-start gap-1.5 text-xs text-red-400 mt-2">
+            <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />
+            <span className="min-w-0 break-words">{errorMsg}</span>
+          </div>
+        )}
+        <p className="text-[10px] text-slate-600 mt-2 text-center">
+          {paymentGateway === "mercadopago" ? "Pago seguro procesado por Mercado Pago" : "Pago seguro procesado por Culqi · tarjeta o Yape"}
+        </p>
+      </div>
+    );
   }
 
   return (

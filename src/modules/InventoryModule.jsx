@@ -74,9 +74,28 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
   const [editSaving,  setEditSaving]  = useState(false);
   const [editError,   setEditError]   = useState("");
 
+  // ── SKU / Código interno automático ──────────────────────────────────
+  // Empieza en "001" y sube según cuántos productos hay. Se calcula a
+  // partir del SKU numérico más alto que ya exista (no solo products.length)
+  // para no repetir un código si se borró algún producto de en medio —
+  // ej. si el producto "005" se eliminó, el siguiente sigue siendo "00N+1"
+  // según el más alto existente, nunca vuelve a ofrecer "005".
+  // Si algún producto tiene un SKU con letras (ej. "EL-001", de una época
+  // anterior), simplemente se ignora para este cálculo — solo cuentan los
+  // SKU 100% numéricos.
+  const nextSku = useMemo(() => {
+    const maxExisting = products.reduce((max, p) => {
+      const n = /^\d+$/.test(p.sku || "") ? parseInt(p.sku, 10) : 0;
+      return n > max ? n : max;
+    }, 0);
+    const next = maxExisting + 1;
+    // Ancho mínimo 3 dígitos ("001"..."999"); si ya hay más de 999
+    // productos, crece a "1000" en vez de truncar.
+    return String(next).padStart(3, "0");
+  }, [products]);
+
   const filtered = useMemo(() => products.filter(p => {
-    const q = search.toLowerCase();
-    return (p.name?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q) || p.barcode?.includes(q)) &&
+    const q = search.toLowerCase();    return (p.name?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q) || p.barcode?.includes(q)) &&
       (statusFilter === "Todos" || p.status === statusFilter);
   }), [products, search, statusFilter]);
 
@@ -131,7 +150,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
         status:   stock === 0 ? "Agotado" : stock <= minStock ? "Stock Bajo" : "En Stock",
       });
       setShowNewProd(false);
-      setNewProd({ name: "", sku: "", description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" });
+      setNewProd({ name: "", sku: nextSku, description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" });
     } catch (err) {
       setSaveError(logAndGetErrorMessage(err, "Error al crear producto:"));
     }
@@ -220,7 +239,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
           ))}
         </div>
         {canCreate && (
-          <button onClick={() => { setShowNewProd(true); setSaveError(""); }}
+          <button onClick={() => { setShowNewProd(true); setSaveError(""); setNewProd(p => ({ ...p, sku: nextSku })); }}
             className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-sm rounded-lg transition-colors">
             <Plus size={15} /> Producto
           </button>
@@ -422,7 +441,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">SKU / Código interno *</label>
+                    <label className="text-xs text-slate-400 mb-1 block">SKU / Código interno * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable)</span></label>
                     <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: EL-001"
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>

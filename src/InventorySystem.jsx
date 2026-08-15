@@ -205,6 +205,11 @@ export default function InventoryApp() {
                 onSaveBilling={handleSaveBilling}
                 companyCurrency={companyCurrency}
                 onChangeCountry={handleChangeCountry}
+                subscription={subscription}
+                isBlocked={isBlocked}
+                trialDaysLeft={trialDaysLeft}
+                companyId={companyId}
+                getIdToken={() => currentUser.getIdToken()}
               />
             </div>
 

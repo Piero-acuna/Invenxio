@@ -147,7 +147,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
       await emitInvoice({
         partyName: pForm.supplier,
         items: [{ name: targetProduct.name, description: targetProduct.description || pForm.product.description || "", qty, unitPrice: cost, total }],
-        total, note: pForm.note,
+        total, note: pForm.note, operationType: "compra",
       });
       setTimeout(() => { setPSuccess(false); setPMsg(""); setPForm({ supplier: "", product: null, productSearch: "", locationId: "", packCount: "", unitCost: "", note: "" }); }, 5000);
     } catch (err) {
@@ -243,7 +243,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
           partyName: ssForm.supplier,
           items: [{ name: ssForm.product.name, description: ssForm.product.description || "", qty, unitPrice: Number(ssForm.unitPrice), total: qty * Number(ssForm.unitPrice) }],
           total: qty * Number(ssForm.unitPrice),
-          note: ssForm.note,
+          note: ssForm.note, operationType: "venta",
         });
       }
       setTimeout(() => { setSsSuccess(false); setSsForm({ supplier: "", product: null, productSearch: "", locationId: "", qty: "", unitPrice: "", note: "", status: "Entregado" }); }, 2500);
@@ -260,7 +260,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
 
   const [invoiceMsgSupplier, setInvoiceMsgSupplier] = useState("");
 
-  async function emitInvoice({ partyName, items, total, note }) {
+  async function emitInvoice({ partyName, items, total, note, operationType }) {
     if (!billing?.razonSocial) {
       setInvoiceMsgSupplier("No se generó comprobante: completa tus Datos de Facturación en el Panel.");
       setTimeout(() => setInvoiceMsgSupplier(""), 4500);
@@ -269,7 +269,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
     try {
       const invoiceNumber = await getNextInvoiceNumber(companyId);
       generateInvoicePDF({
-        billing, docType: "PROVEEDOR", partyLabel: "Proveedor",
+        billing, docType: "PROVEEDOR", partyLabel: "Proveedor", operationType,
         partyName: partyName || "—", items, total, note: note || "", invoiceNumber,
         currencySymbol,
       });
@@ -287,7 +287,7 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
         partyName: sale.supplier,
         items: [{ name: sale.product, description: sale.description || "", qty: sale.qty, unitPrice: sale.unitPrice, total: sale.total }],
         total: sale.total,
-        note: sale.note,
+        note: sale.note, operationType: "venta",
       });
     } catch (err) {
       setInvoiceMsgSupplier(logAndGetErrorMessage(err, "Error al marcar entregado / generar comprobante:", "Ocurrió un error al generar el comprobante."));

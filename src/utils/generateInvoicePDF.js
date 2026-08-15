@@ -41,7 +41,9 @@ function setText(pdf, c) { pdf.setTextColor(c[0], c[1], c[2]); }
 /**
  * @param {Object} params
  * @param {Object} params.billing        Datos del Dueño: { razonSocial, ruc, direccion, telefono, email, serie }
- * @param {"VENTA"|"PROVEEDOR"} params.docType  Tipo de comprobante
+ * @param {"VENTA"|"PROVEEDOR"} params.docType  Tipo de comprobante (heredado — usar operationType para distinguir compra/venta con proveedores)
+ * @param {"compra"|"venta"} [params.operationType]  Si la operación es una compra o una venta — necesario junto a un Proveedor, donde docType="PROVEEDOR" no alcanza para saber cuál de las dos es
+ * @param {string} [params.date]         Fecha real de la operación ("YYYY-MM-DD") — para reimpresiones; si no se pasa, usa hoy
  * @param {string} params.partyLabel     "Cliente" | "Proveedor"
  * @param {string} params.partyName      Nombre del cliente o proveedor
  * @param {Array}  params.items          [{ name, qty, unitPrice, total }]
@@ -54,6 +56,16 @@ function setText(pdf, c) { pdf.setTextColor(c[0], c[1], c[2]); }
 export function generateInvoicePDF({
   billing, docType = "VENTA", partyLabel = "Cliente", partyName = "",
   items = [], total = 0, invoiceNumber, note = "", currencySymbol = "S/",
+  // `operationType`: "compra" | "venta" — reemplaza a la ambigüedad de
+  // docType==="PROVEEDOR" (que antes se usaba tanto para una COMPRA a un
+  // proveedor como para una VENTA a un proveedor, imprimiendo "COMPROBANTE
+  // DE COMPRA" incorrectamente en este último caso). Si no se pasa, se
+  // deriva de docType para no romper llamadas antiguas.
+  operationType,
+  // Fecha real de la operación (para reimpresiones de un comprobante de
+  // días atrás, ej. desde el Historial) — si no se pasa, se usa la fecha
+  // de hoy (emisión en el momento).
+  date,
 }) {
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
   const pageW = 210;
@@ -65,8 +77,9 @@ export function generateInvoicePDF({
 
   const serie = (billing?.serie || "F001").toUpperCase();
   const correlativo = String(invoiceNumber || 1).padStart(6, "0");
-  const fecha = new Date().toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const isCompra = docType === "PROVEEDOR";
+  const opDate = date ? new Date(`${date}T12:00:00`) : new Date(); // mediodía: evita que un huso horario negativo la corra un día atrás
+  const fecha = opDate.toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const isCompra = operationType ? operationType === "compra" : docType === "PROVEEDOR";
 
   const addLegalFooter = () => {
     setDraw(pdf, COLOR.line);
@@ -243,6 +256,19 @@ export function generateInvoicePDF({
     pdf.text(`Página ${p} de ${pageCount}`, rightX, 285, { align: "right" });
   }
 
-  pdf.save(`${isCompra ? "Compra" : "Venta"}_${serie}-${correlativo}.pdf`);
+  // Nombre del archivo: fecha de la operación + si es compra o venta + el
+  // nombre del proveedor cuando aplica (una venta a un cliente final no
+  // lleva nombre, porque "Cliente varios" no identifica a nadie en
+  // particular y ensuciaría el nombre del archivo).
+  const fileDate = date || opDate.toISOString().slice(0, 10); // YYYY-MM-DD
+  const opWord = isCompra ? "Compra" : "Venta";
+  const partySlug = partyLabel === "Proveedor" && partyName
+    ? "_" + partyName
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quita tildes
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40)
+    : "";
+  pdf.save(`${opWord}_${fileDate}${partySlug}.pdf`);
   return true;
 }

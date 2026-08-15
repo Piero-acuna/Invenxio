@@ -9,13 +9,14 @@
 import { useState, useRef, useEffect } from "react";
 import {
   LayoutPanelLeft, X, UserPlus, Users, Mail, Lock, User as UserIcon,
-  Crown, Shield, RefreshCw, AlertCircle, CheckCircle,
+  Crown, Shield, RefreshCw, AlertCircle, CheckCircle, CheckCircle2, CreditCard,
   Power, PowerOff, ChevronDown, Settings2, Save, Receipt, Building2,
-  Package, BarChart2, Warehouse, Truck, Sliders, Zap, Globe,
+  Package, BarChart2, Warehouse, Truck, Sliders, Zap, Globe, Loader2,
 } from "lucide-react";
 import { PERMISSION_GROUPS, defaultPermissions, getEffectivePermissions } from "../config/permissions";
 import { COUNTRIES, getCountryConfig } from "../config/countryConfig";
 import { logAndGetErrorMessage } from "../utils/errors";
+import PaywallScreen from "./PaywallScreen";
 
 // Iconos por grupo de permisos (solo visual, permissions.js se queda sin JSX)
 const GROUP_ICONS = {
@@ -150,6 +151,7 @@ export default function RolePanel({
   onRegisterEmployee, onChangePermissions, onToggleActive,
   billing, onSaveBilling,
   companyCurrency, onChangeCountry,
+  subscription, isBlocked, trialDaysLeft, companyId, getIdToken,
 }) {
   const [open,     setOpen]     = useState(false);
   const [tab,      setTab]      = useState("perfil"); // "perfil" | "equipo"
@@ -204,7 +206,14 @@ export default function RolePanel({
           </div>
 
           <div className="p-4 max-h-[min(32rem,70vh)] overflow-y-auto">
-            {tab === "perfil" && <PerfilTab userProfile={userProfile} companyName={companyName} companyCurrency={companyCurrency} onChangeCountry={onChangeCountry} />}
+            {tab === "perfil" && (
+              <PerfilTab
+                userProfile={userProfile} companyName={companyName}
+                companyCurrency={companyCurrency} onChangeCountry={onChangeCountry}
+                subscription={subscription} isBlocked={isBlocked} trialDaysLeft={trialDaysLeft}
+                companyId={companyId} getIdToken={getIdToken}
+              />
+            )}
             {tab === "equipo" && canManage && (
               <EquipoTab
                 employees={employees}
@@ -228,7 +237,7 @@ export default function RolePanel({
 }
 
 // ── Pestaña: Mis Datos ────────────────────────────────────────────────────────
-function PerfilTab({ userProfile, companyName, companyCurrency, onChangeCountry }) {
+function PerfilTab({ userProfile, companyName, companyCurrency, onChangeCountry, subscription, isBlocked, trialDaysLeft, companyId, getIdToken }) {
   if (!userProfile) return null;
   const isOwner = userProfile.role === "owner";
   const perms = getEffectivePermissions(userProfile);
@@ -250,6 +259,14 @@ function PerfilTab({ userProfile, companyName, companyCurrency, onChangeCountry 
       <Row label="Estado" value={userProfile.active === false ? "Desactivado" : "Activo"} />
 
       {isOwner && (
+        <SubscriptionSection
+          subscription={subscription} isBlocked={isBlocked} trialDaysLeft={trialDaysLeft}
+          companyId={companyId} companyName={companyName} getIdToken={getIdToken}
+          paymentGateway={companyCurrency?.paymentGateway}
+        />
+      )}
+
+      {isOwner && (
         <CurrencySection companyCurrency={companyCurrency} onChangeCountry={onChangeCountry} />
       )}
 
@@ -267,6 +284,83 @@ function PerfilTab({ userProfile, companyName, companyCurrency, onChangeCountry 
               ))}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sección: Suscripción (pagar / renovar / estado — solo Dueño) ────────────
+// A diferencia del bloqueo total de PaywallScreen.jsx (que solo aparece
+// cuando ya venció), esto vive siempre visible en "Mis Datos" — así el
+// Dueño puede ver de un vistazo si está al día, y pagar por adelantado
+// cuando quiera, sin esperar a quedarse bloqueado. Reutiliza PaywallScreen
+// en su modo `embedded` para no duplicar la lógica de cobro con Culqi/
+// Mercado Pago (ver ese archivo).
+function SubscriptionSection({ subscription, isBlocked, trialDaysLeft, companyId, companyName, getIdToken, paymentGateway }) {
+  const [showPay, setShowPay] = useState(false);
+
+  const paidUntilDate = subscription?.paidUntil ? new Date(subscription.paidUntil) : null;
+  const now = new Date().getTime();
+  const isPaidActive = subscription?.status === "active" && paidUntilDate && paidUntilDate.getTime() > now;
+
+  let statusLabel, tone;
+  if (isBlocked) {
+    tone = "red";
+    statusLabel = "Vencida — renueva para seguir usando Invenxio";
+  } else if (isPaidActive) {
+    tone = "emerald";
+    statusLabel = `Pagado hasta el ${paidUntilDate.toLocaleDateString("es-PE", { day: "2-digit", month: "long", year: "numeric" })}`;
+  } else if (subscription?.status === "trial" && trialDaysLeft != null) {
+    tone = "amber";
+    statusLabel = `Prueba gratis — quedan ${trialDaysLeft} día${trialDaysLeft === 1 ? "" : "s"}`;
+  } else {
+    tone = "slate";
+    statusLabel = "Sin información de suscripción todavía";
+  }
+
+  const TONE_CLASSES = {
+    emerald: "bg-emerald-500/10 border-emerald-500/30 text-emerald-400",
+    amber:   "bg-amber-500/10 border-amber-500/30 text-amber-400",
+    red:     "bg-red-500/10 border-red-500/30 text-red-400",
+    slate:   "bg-slate-800/60 border-slate-700 text-slate-400",
+  };
+
+  return (
+    <div className="pt-3 border-t border-slate-800">
+      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <CreditCard size={11} /> Suscripción
+      </p>
+
+      {/* flex-wrap: en pantallas angostas el ícono + texto pueden pasar a
+          dos líneas sin romper el recuadro (ej. "Pagado hasta el 15 de
+          septiembre de 2026" es largo). */}
+      <div className={`flex flex-wrap items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium mb-2 ${TONE_CLASSES[tone]}`}>
+        {tone === "emerald" && <CheckCircle2 size={13} className="flex-shrink-0" />}
+        {tone === "red" && <AlertCircle size={13} className="flex-shrink-0" />}
+        <span className="min-w-0 break-words">{statusLabel}</span>
+      </div>
+
+      {!showPay ? (
+        <button
+          onClick={() => setShowPay(true)}
+          className={`w-full text-xs font-semibold px-3 py-2 rounded-lg transition-colors ${
+            isPaidActive
+              ? "bg-transparent border border-slate-700 text-slate-400 hover:border-amber-500/50 hover:text-amber-400"
+              : "bg-amber-500 hover:bg-amber-400 text-slate-900"
+          }`}
+        >
+          {isBlocked ? "Renovar ahora" : isPaidActive ? "Pagar por adelantado" : "Pagar ahora"}
+        </button>
+      ) : (
+        <div className="p-3 bg-slate-800/50 border border-slate-700/60 rounded-lg">
+          <PaywallScreen
+            embedded isOwner
+            companyId={companyId}
+            companyName={companyName}
+            getIdToken={getIdToken}
+            paymentGateway={paymentGateway}
+          />
         </div>
       )}
     </div>
