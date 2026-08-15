@@ -441,7 +441,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">SKU / Código interno * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable)</span></label>
+                    <label className="text-xs text-slate-400 mb-1 block">SKU / Código interno * <span className="text-slate-500 normal-case font-normal">(editable)</span></label>
                     <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: EL-001"
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
