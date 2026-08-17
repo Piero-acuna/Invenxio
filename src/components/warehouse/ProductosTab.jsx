@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import {
-  Plus, X, Edit3, Trash2, Search, RefreshCw, CheckCircle, MapPin, Boxes,
+  Plus, X, Edit3, Trash2, Search, RefreshCw, CheckCircle, MapPin, Boxes, FileSpreadsheet,
 } from "lucide-react";
 import {
   addWarehouseProduct, updateWarehouseProduct, deleteWarehouseProduct,
@@ -19,9 +19,27 @@ import {
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
+import ImportExcelModal from "../ImportExcelModal";
 import { useAuth } from "../../contexts/AuthContext";
 import { formatMoney } from "../../utils/currency";
 import { calcUnitsFromPacks } from "../../utils/packaging";
+
+// ── Plantilla de importación por Excel ───────────────────────────────────
+// Mismos campos que el alta manual de arriba (handleSave, rama !editItem):
+// nombre, empaque, y stock inicial en una ubicación — no se puede crear un
+// producto de almacén sin elegir dónde queda guardado. "SKU / Código" y
+// "Precio de Referencia" son opcionales.
+const WAREHOUSE_IMPORT_HEADERS = [
+  "SKU / Código", "Nombre", "Descripción", "Nombre del Empaque",
+  "Unidades por Empaque", "Precio de Referencia", "Ubicación", "Cantidad Inicial (empaques)",
+];
+function warehouseImportExample(firstLocationName) {
+  const loc = firstLocationName || "Almacén Principal";
+  return [
+    { "SKU / Código": "", "Nombre": "Arroz Extra", "Descripción": "Saco de arroz", "Nombre del Empaque": "Saco", "Unidades por Empaque": 50, "Precio de Referencia": 4.2, "Ubicación": loc, "Cantidad Inicial (empaques)": 20 },
+    { "SKU / Código": "", "Nombre": "Aceite Vegetal", "Descripción": "", "Nombre del Empaque": "Caja", "Unidades por Empaque": 12, "Precio de Referencia": 9.5, "Ubicación": loc, "Cantidad Inicial (empaques)": 10 },
+  ];
+}
 
 export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
   const { companyCurrency } = useAuth();
@@ -88,6 +106,80 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
     setSaving(false);
   }
 
+  // ── Importar Excel ────────────────────────────────────────────────────
+  const [showImport, setShowImport] = useState(false);
+
+  // Valida todas las filas del Excel de una vez: necesita el conjunto
+  // completo de `locations` (para resolver el nombre de ubicación escrito
+  // en la planilla a un locationId real) y detectar SKUs repetidos dentro
+  // del propio archivo, igual que en Inventario.
+  function parseWarehouseImportRows(rawRows) {
+    const existingSkus = new Set(warehouseProducts.map(p => (p.sku || "").trim().toLowerCase()).filter(Boolean));
+    const usedInBatch = new Set();
+    const locationByName = new Map(locations.map(l => [(l.name || "").trim().toLowerCase(), l]));
+
+    return rawRows.map((raw) => {
+      const name = String(raw["Nombre"] ?? "").trim();
+      const label = name || "(sin nombre)";
+      const sku = String(raw["SKU / Código"] ?? "").trim();
+      const packName = String(raw["Nombre del Empaque"] ?? "").trim();
+      const packQty = Number(raw["Unidades por Empaque"]);
+      const locationNameRaw = String(raw["Ubicación"] ?? "").trim();
+      const packCount = Number(raw["Cantidad Inicial (empaques)"]);
+
+      if (!name) return { ok: false, label, error: "Falta el nombre del producto." };
+      if (!packName) return { ok: false, label, error: 'Falta "Nombre del Empaque" (ej: Caja, Saco, Paquete).' };
+      if (!packQty || Number.isNaN(packQty) || packQty <= 0) {
+        return { ok: false, label, error: '"Unidades por Empaque" debe ser un número mayor a 0.' };
+      }
+      if (sku && (existingSkus.has(sku.toLowerCase()) || usedInBatch.has(sku.toLowerCase()))) {
+        return { ok: false, label, error: `El SKU "${sku}" ya existe (en tu catálogo de almacén, o repetido en este mismo archivo).` };
+      }
+      if (!locationNameRaw) return { ok: false, label, error: 'Falta la "Ubicación".' };
+      const location = locationByName.get(locationNameRaw.toLowerCase());
+      if (!location) {
+        return { ok: false, label, error: `No existe una ubicación llamada "${locationNameRaw}". Créala primero en Almacén → Mapa (el nombre debe coincidir).` };
+      }
+      if (!packCount || Number.isNaN(packCount) || packCount <= 0) {
+        return { ok: false, label, error: '"Cantidad Inicial (empaques)" debe ser un número mayor a 0.' };
+      }
+      if (sku) usedInBatch.add(sku.toLowerCase());
+
+      const unitPriceRaw = raw["Precio de Referencia"];
+      const unitPrice = unitPriceRaw === "" || unitPriceRaw === null || unitPriceRaw === undefined ? null : Number(unitPriceRaw);
+
+      return {
+        ok: true,
+        label: `${name}${sku ? ` (SKU ${sku})` : ""} — ${location.name}`,
+        values: {
+          name, sku, description: String(raw["Descripción"] ?? "").trim(),
+          packName, packQty, unitPrice,
+          locationId: location.id, locationName: location.name,
+          packCount,
+        },
+      };
+    });
+  }
+
+  // Mismo flujo de 2 pasos que handleSave (rama !editItem): crea el
+  // producto y, con el id que devuelve, registra el stock inicial como un
+  // movimiento de "entrada" en la ubicación elegida.
+  async function importWarehouseProductRow(values) {
+    const newProductId = await addWarehouseProduct(companyId, {
+      name: values.name, sku: values.sku, description: values.description,
+      packName: values.packName, packQty: values.packQty, unitPrice: values.unitPrice,
+    });
+    await addWarehouseMovement(companyId, {
+      type: "entrada",
+      productId: newProductId, productName: values.name, sku: values.sku,
+      qty: values.packCount,
+      toLocationId: values.locationId, toLocationName: values.locationName,
+      reason: "Stock inicial (importado)",
+      userName,
+      packName: values.packName, packQty: values.packQty,
+    });
+  }
+
   async function handleDelete(p) {
     const hasStock = (stockByProduct[p.id] || []).some(s => s.qty > 0);
     if (hasStock) { alert("No puedes eliminar un producto con stock registrado en alguna ubicación. Trasládalo o envíalo a la tienda primero."); return; }
@@ -112,6 +204,10 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar…"
             className="w-full pl-8 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
         </div>
+        <button onClick={() => setShowImport(true)}
+          className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-xs rounded-lg transition-colors">
+          <FileSpreadsheet size={13} /> Importar Excel
+        </button>
         <button onClick={openNew}
           className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold text-xs rounded-lg transition-colors">
           <Plus size={13} /> Nuevo Producto de Almacén
@@ -239,6 +335,18 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
       {stockFor && (
         <AddStockModal product={stockFor} locations={locations} companyId={companyId} userName={userName} onClose={() => setStockFor(null)} />
       )}
+
+      <ImportExcelModal
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        title="Importar productos de almacén desde Excel"
+        templateFilename="Invenxio_Plantilla_Almacen"
+        templateHeaders={WAREHOUSE_IMPORT_HEADERS}
+        templateExample={warehouseImportExample(locations[0]?.name)}
+        parseRows={parseWarehouseImportRows}
+        onImportRow={importWarehouseProductRow}
+        itemNoun="productos"
+      />
     </div>
   );
 }

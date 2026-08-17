@@ -8,6 +8,7 @@ import { useState, useMemo, useEffect } from "react";
 import {
   Search, X, Plus, Package, History, ArrowUpCircle, ArrowDownCircle,
   AlertTriangle, CheckCircle, Edit3, Box, Zap, Loader2, ScanBarcode, Save,
+  FileSpreadsheet,
 } from "lucide-react";
 import {
   addProduct, updateProduct, deleteProduct, adjustProductStock,
@@ -20,6 +21,21 @@ import { BarcodeDisplay } from "../components/BarcodeUI";
 import { generateBarcode } from "../lib/barcode";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
+import ImportExcelModal from "../components/ImportExcelModal";
+
+// ── Plantilla de importación por Excel ───────────────────────────────────
+// Encabezados EXACTOS que debe traer el archivo (fila 1). "SKU / Código" y
+// "Código de Barras" son opcionales — si se dejan vacíos, se autogeneran
+// igual que en el alta manual (ver `nextSku` y generateBarcode()).
+const PRODUCT_IMPORT_HEADERS = [
+  "SKU / Código", "Nombre", "Descripción", "Categoría",
+  "Precio de Venta", "Costo", "Stock Inicial", "Stock Mínimo",
+  "Unidades por Empaque", "Código de Barras",
+];
+const PRODUCT_IMPORT_EXAMPLE = [
+  { "SKU / Código": "001", "Nombre": "Coca Cola 500ml", "Descripción": "Bebida gaseosa", "Categoría": "Bebidas", "Precio de Venta": 3.5, "Costo": 2.2, "Stock Inicial": 48, "Stock Mínimo": 10, "Unidades por Empaque": 6, "Código de Barras": "" },
+  { "SKU / Código": "", "Nombre": "Arroz Extra 1kg", "Descripción": "", "Categoría": "Abarrotes", "Precio de Venta": 5.9, "Costo": 4.3, "Stock Inicial": 30, "Stock Mínimo": 5, "Unidades por Empaque": "", "Código de Barras": "" },
+];
 import { calcProfit, calcMarginPercent } from "../utils/finance";
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -93,6 +109,60 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
     // productos, crece a "1000" en vez de truncar.
     return String(next).padStart(3, "0");
   }, [products]);
+
+  // ── Importar Excel ────────────────────────────────────────────────────
+  const [showImport, setShowImport] = useState(false);
+
+  // Valida TODAS las filas leídas del Excel de una vez (no una por una),
+  // porque necesita ver el conjunto completo para: continuar la numeración
+  // automática de SKU sin repetir dentro del mismo archivo, y detectar SKUs
+  // duplicados contra el inventario actual Y entre filas del propio Excel.
+  function parseProductImportRows(rawRows) {
+    const existingSkus = new Set(products.map(p => (p.sku || "").trim().toLowerCase()).filter(Boolean));
+    let autoSkuCounter = parseInt(nextSku, 10);
+    const usedInBatch = new Set();
+
+    return rawRows.map((raw) => {
+      const name = String(raw["Nombre"] ?? "").trim();
+      const label = name || "(sin nombre)";
+      let sku = String(raw["SKU / Código"] ?? "").trim();
+      const priceRaw = raw["Precio de Venta"];
+      const price = Number(priceRaw);
+
+      if (!name) return { ok: false, label, error: "Falta el nombre del producto." };
+      if (priceRaw === "" || priceRaw === null || priceRaw === undefined || Number.isNaN(price) || price < 0) {
+        return { ok: false, label, error: 'La columna "Precio de Venta" es obligatoria y debe ser un número.' };
+      }
+
+      if (!sku) {
+        sku = String(autoSkuCounter).padStart(3, "0");
+        autoSkuCounter++;
+      } else if (existingSkus.has(sku.toLowerCase()) || usedInBatch.has(sku.toLowerCase())) {
+        return { ok: false, label, error: `El SKU "${sku}" ya existe (en tu inventario, o repetido en este mismo archivo).` };
+      }
+      usedInBatch.add(sku.toLowerCase());
+
+      const packQty  = Number(raw["Unidades por Empaque"]) || 0;
+      const stock    = Number(raw["Stock Inicial"]) || 0;
+      const minStock = Number(raw["Stock Mínimo"]) || 4;
+      const cost     = Number(raw["Costo"]) || 0;
+      const barcode  = String(raw["Código de Barras"] ?? "").trim() || generateBarcode();
+
+      return {
+        ok: true,
+        label: `${name} (SKU ${sku})`,
+        values: {
+          name, sku,
+          description: String(raw["Descripción"] ?? "").trim(),
+          category:    String(raw["Categoría"] ?? "").trim(),
+          price, cost, stock, minStock,
+          packQty: packQty || null,
+          barcode,
+          status: stock === 0 ? "Agotado" : stock <= minStock ? "Stock Bajo" : "En Stock",
+        },
+      };
+    });
+  }
 
   const filtered = useMemo(() => products.filter(p => {
     const q = search.toLowerCase();    return (p.name?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q) || p.barcode?.includes(q)) &&
@@ -239,10 +309,16 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
           ))}
         </div>
         {canCreate && (
-          <button onClick={() => { setShowNewProd(true); setSaveError(""); setNewProd(p => ({ ...p, sku: nextSku })); }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-sm rounded-lg transition-colors">
-            <Plus size={15} /> Producto
-          </button>
+          <>
+            <button onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-sm rounded-lg transition-colors">
+              <FileSpreadsheet size={15} /> <span className="hidden sm:inline">Importar</span> Excel
+            </button>
+            <button onClick={() => { setShowNewProd(true); setSaveError(""); setNewProd(p => ({ ...p, sku: nextSku })); }}
+              className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-sm rounded-lg transition-colors">
+              <Plus size={15} /> Producto
+            </button>
+          </>
         )}
       </div>
 
@@ -441,7 +517,7 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">SKU / Código interno * <span className="text-slate-500 normal-case font-normal">(editable)</span></label>
+                    <label className="text-xs text-slate-400 mb-1 block">SKU / Código interno * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable)</span></label>
                     <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: EL-001"
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
@@ -690,6 +766,18 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
           </div>
         </div>
       )}
+
+      <ImportExcelModal
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        title="Importar productos desde Excel"
+        templateFilename="Invenxio_Plantilla_Productos"
+        templateHeaders={PRODUCT_IMPORT_HEADERS}
+        templateExample={PRODUCT_IMPORT_EXAMPLE}
+        parseRows={parseProductImportRows}
+        onImportRow={(values) => addProduct(companyId, values)}
+        itemNoun="productos"
+      />
     </div>
   );
 };
