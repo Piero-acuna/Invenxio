@@ -25,6 +25,7 @@ import { getCountryConfig } from "./config/countryConfig";
 import RolePanel, { RoleBadge } from "./components/RolePanel";
 import { hasPermission, canSeeTab, TAB_DEFS } from "./config/permissions";
 import { useCollection } from "./hooks/useCollection";
+import { useWarehouseData } from "./hooks/useWarehouseData";
 import PaywallScreen from "./components/PaywallScreen";
 import TrialBanner   from "./components/TrialBanner";
 
@@ -46,9 +47,16 @@ const WarehouseModule  = lazy(() => import("./WarehouseModule"));
 // Wrapper que provee el catálogo de TIENDA al módulo de almacén, solo como
 // destino posible del botón "Enviar a Inventario" — el almacén NUNCA elige
 // productos de este catálogo para su propio stock, tiene el suyo propio.
-function WarehouseModuleWrapper({ companyId, userName, canManage }) {
-  const [storeProducts] = useCollection(companyId, "products", "name");
-  return <WarehouseModule companyId={companyId} userName={userName} storeProducts={storeProducts} canManage={canManage} />;
+// `storeProducts` y los 4 datos de almacén llegan ya cargados desde
+// InventorySystem.jsx (compartidos con SuppliersModule.jsx y
+// MovementsModule.jsx) — este wrapper ya no abre ninguna suscripción propia.
+function WarehouseModuleWrapper({ companyId, userName, canManage, storeProducts, locations, stock, movements, warehouseProducts, loadingWarehouse }) {
+  return (
+    <WarehouseModule
+      companyId={companyId} userName={userName} storeProducts={storeProducts} canManage={canManage}
+      locations={locations} stock={stock} movements={movements} warehouseProducts={warehouseProducts} loading={loadingWarehouse}
+    />
+  );
 }
 
 // Loader liviano mientras se descarga el chunk del módulo elegido.
@@ -171,7 +179,24 @@ export default function InventoryApp() {
     ? Math.ceil((trialEndsAt - now) / 86400000)
     : null;
 
-  const [products] = useCollection(companyId, "products", "name");
+  // "products" y "suppliers" se cargan UNA sola vez acá (InventorySystem
+  // ya los necesitaba para el indicador de stock bajo del header) y se
+  // pasan como prop a Dashboard e Inventario en vez de que cada uno abra su
+  // propia suscripción — antes "products" se descargaba y suscribía 4
+  // veces por separado (acá, en Dashboard, en Inventario y en Movimientos)
+  // para exactamente los mismos datos.
+  const [products, loadingProducts]   = useCollection(companyId, "products",  "name");
+  const [suppliers, loadingSuppliers] = useCollection(companyId, "suppliers", "name");
+  // "supplierSales" compartido entre MovementsModule (Historial) y
+  // SuppliersModule (Ventas a Proveedores) — misma tabla, mismo orden, sin
+  // límite en ambos casos, así que una sola copia sirve para los dos.
+  const [supplierSales, loadingSupplierSales] = useCollection(companyId, "supplierSales", "createdAt");
+  // Los 4 datos de Almacén (locations, stock, movements, warehouseProducts)
+  // se cargan UNA sola vez acá y se comparten entre WarehouseModule,
+  // SuppliersModule (necesita los 3 primeros) y MovementsModule (solo
+  // necesita `movements`, para su Historial) — antes cada uno abría sus
+  // propias suscripciones independientes a las mismas 4 tablas.
+  const { locations, stock, movements, warehouseProducts, loading: loadingWarehouse } = useWarehouseData(companyId);
   const lowStock   = products.filter(p => p.status !== "En Stock").length;
 
   return (
@@ -283,26 +308,39 @@ export default function InventoryApp() {
               <Suspense fallback={<ModuleLoader />}>
                 {activeTab === "dashboard" && (
                   <DashboardModule companyId={companyId} userName={userName} companyName={companyName}
-                    perms={perms} onNavigate={setActiveTab} />
+                    perms={perms} onNavigate={setActiveTab}
+                    products={products} loadingProducts={loadingProducts}
+                    suppliers={suppliers} loadingSuppliers={loadingSuppliers}
+                    supplierSales={supplierSales} loadingSupplierSales={loadingSupplierSales} />
                 )}
                 {activeTab === "inventory" && (
                   <InventoryModule companyId={companyId} userName={userName}
                     canCreate={perms.crearProductos} canEdit={perms.editarProductos}
-                    canDelete={perms.eliminarRegistros} canViewFinance={perms.verMetricas} />
+                    canDelete={perms.eliminarRegistros} canViewFinance={perms.verMetricas}
+                    products={products} loadingProducts={loadingProducts}
+                    suppliers={suppliers} />
                 )}
                 {activeTab === "movements" && (
                   <MovementsModule companyId={companyId} userName={userName}
                     canPurchase={perms.registrarCompras} canSell={perms.registrarVentas}
-                    canViewFinance={perms.verMetricas} billing={billing} />
+                    canViewFinance={perms.verMetricas} billing={billing}
+                    products={products} loadingProducts={loadingProducts}
+                    warehouseMovements={movements} supplierSales={supplierSales} />
                 )}
                 {activeTab === "warehouse" && (
                   <WarehouseModuleWrapper companyId={companyId} userName={userName}
-                    canManage={perms.gestionarAlmacen} />
+                    canManage={perms.gestionarAlmacen}
+                    storeProducts={products}
+                    locations={locations} stock={stock} movements={movements}
+                    warehouseProducts={warehouseProducts} loadingWarehouse={loadingWarehouse} />
                 )}
                 {activeTab === "suppliers" && (
                   <SuppliersModule companyId={companyId} userName={userName}
                     canManageSuppliers={perms.gestionarProveedores} canDelete={perms.eliminarRegistros}
-                    canViewFinance={perms.verMetricas} billing={billing} />
+                    canViewFinance={perms.verMetricas} billing={billing}
+                    suppliers={suppliers} loadingSuppliers={loadingSuppliers}
+                    supplierSales={supplierSales} loadingSupplierSales={loadingSupplierSales}
+                    warehouseProducts={warehouseProducts} warehouseStock={stock} warehouseLocations={locations} />
                 )}
               </Suspense>
             )}

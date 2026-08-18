@@ -9,7 +9,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
-import { useWarehouseData } from "./hooks/useWarehouseData";
 import MapaTab       from "./components/warehouse/MapaTab";
 import ProductosTab  from "./components/warehouse/ProductosTab";
 import MovimientoTab from "./components/warehouse/MovimientoTab";
@@ -19,8 +18,16 @@ import HistorialTab  from "./components/warehouse/HistorialTab";
 // solo lo usa como lista de destino posible en "Enviar a Tienda" — nunca para
 // elegir qué hay en el almacén. El almacén tiene su propio catálogo
 // (`warehouseProducts`) que se gestiona en la pestaña "Mis Productos".
-export default function WarehouseModule({ companyId, userName, storeProducts = [], canManage }) {
-  const { locations, stock, movements, warehouseProducts, loading } = useWarehouseData(companyId);
+//
+// `locations`, `stock`, `movements`, `warehouseProducts` YA NO se cargan acá
+// con useWarehouseData() — llegan como prop desde InventorySystem.jsx, que
+// las carga una sola vez y las comparte con SuppliersModule.jsx y
+// MovementsModule.jsx también (antes cada uno abría su propia suscripción
+// independiente a exactamente los mismos datos de almacén).
+export default function WarehouseModule({
+  companyId, userName, storeProducts = [], canManage,
+  locations, stock, movements, warehouseProducts, loading,
+}) {
   const [wTab, setWTab] = useState("mapa"); // "mapa" | "productos" | "movimiento" | "historial"
 
   // Stock agrupado por ubicación

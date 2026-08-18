@@ -26,23 +26,27 @@ import { sumTotals, calcInventoryValue } from "../utils/finance";
 
 const todayStr = () => new Date().toISOString().split("T")[0];
 
-export default function DashboardModule({ companyId, userName, companyName, perms, onNavigate }) {
+export default function DashboardModule({
+  companyId, userName, companyName, perms, onNavigate,
+  products, loadingProducts: loadingProd, suppliers, loadingSuppliers: loadingSup,
+  supplierSales, loadingSupplierSales: loadingSS,
+}) {
   // Símbolo de moneda de la empresa (S/ para Perú, $ para el resto — ver
   // countryConfig.js). `money` reemplaza al viejo `S/ ${...}` fijo.
   const { companyCurrency } = useAuth();
   const money = (n) => formatMoney(n, companyCurrency.currencySymbol);
   // ── Datos de Inventario (tienda) y Movimientos ─────────────────────────────
-  const [products,     loadingProd] = useCollection(companyId, "products",     "name");
+  // "products", "suppliers" y "supplierSales" YA NO se suscriben acá —
+  // llegan como prop desde InventorySystem.jsx, que los carga una sola vez
+  // y los comparte con Inventario/Movimientos/Proveedores también (antes
+  // cada módulo abría su propia suscripción independiente a los mismos
+  // datos).
   // "transactions" SIN límite a propósito: el ranking de "más y menos
   // vendidos" de abajo (topProducts) es histórico completo, no solo
   // reciente — capar esto le daría un ranking incorrecto. (Compárese con
   // MovementsModule.jsx, que sí capa su propia copia de "transactions"
   // porque ahí solo alimenta un gráfico de periodo reciente.)
   const [transactions, loadingTx]   = useCollection(companyId, "transactions", "createdAt");
-
-  // ── Datos de Proveedores ────────────────────────────────────────────────────
-  const [suppliers,     loadingSup] = useCollection(companyId, "suppliers",     "name");
-  const [supplierSales, loadingSS]  = useCollection(companyId, "supplierSales", "createdAt");
 
   // ── Datos de Almacén — mismo patrón de suscripción directa que usan
   //    WarehouseModule.jsx y SuppliersModule.jsx (no son colecciones con un

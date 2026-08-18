@@ -22,21 +22,28 @@ import { formatMoney } from "../utils/currency";
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 2 — MOVEMENTS
 // ══════════════════════════════════════════════════════════════════════════════
-const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFinance, billing }) => {
+const MovementsModule = ({
+  companyId, userName, canPurchase, canSell, canViewFinance, billing,
+  products, loadingProducts: loadingP, warehouseMovements, supplierSales,
+}) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  // limit=500 en "transactions" y "warehouseMovements": acá solo alimentan
-  // la lista/gráfico de "reciente" del Historial (TransactionHistory.jsx
-  // agrupa por período — últimos N días/semanas), nunca un total histórico
-  // completo, así que no hace falta descargar la tabla entera cada vez.
+  // "products", "warehouseMovements" y "supplierSales" YA NO se suscriben
+  // acá — llegan como prop desde InventorySystem.jsx (compartidas también
+  // con Dashboard/Inventario/Almacén/Proveedores), en vez de que este
+  // módulo abra 3 suscripciones independientes a exactamente los mismos
+  // datos.
+  // "transactions" sí se queda con su propia suscripción acá, aparte —
+  // limit=500 porque solo alimenta la lista/gráfico de "reciente" del
+  // Historial (TransactionHistory.jsx agrupa por período — últimos N días/
+  // semanas), nunca un total histórico completo, así que no hace falta
+  // descargar la tabla entera cada vez.
   // OJO: DashboardModule.jsx SÍ necesita el histórico COMPLETO de
   // "transactions" para su ranking de "más vendidos" (histórico, todas las
   // ventas) — por eso su propio useCollection("transactions") se dejó
-  // deliberadamente SIN límite; no es un descuido, es a propósito.
-  const [products,     loadingP] = useCollection(companyId, "products",     "name");
+  // deliberadamente SIN límite y por separado; no se puede compartir una
+  // sola copia entre los dos sin romper a uno de los dos.
   const [transactions, loadingT] = useCollection(companyId, "transactions", "createdAt", 500);
-  const [warehouseMovements] = useCollection(companyId, "warehouseMovements", "createdAt", 500);
-  const [supplierSales]      = useCollection(companyId, "supplierSales",     "createdAt");
 
   const innerTabs = [
     canSell     && { id: "sale",     label: "🛒 Registrar Venta" },

@@ -14,7 +14,6 @@ import {
   addSupplier, updateSupplier, deleteSupplier,
   recordWarehousePurchase,
   updateSupplierSaleStatus, sellWarehouseToSupplier, cancelSupplierSale,
-  subscribeToLocations, subscribeToWarehouseStock, subscribeToWarehouseProducts,
   addWarehouseProduct, updateWarehouseProduct,
   getNextInvoiceNumber,
 } from "../services/firestoreService";
@@ -34,11 +33,19 @@ import { sumTotals } from "../utils/finance";
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 3 — SUPPLIERS
 // ══════════════════════════════════════════════════════════════════════════════
-const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, canViewFinance, billing }) => {
+const SuppliersModule = ({
+  companyId, userName, canManageSuppliers, canDelete, canViewFinance, billing,
+  suppliers, loadingSuppliers: loadingSup,
+  supplierSales, loadingSupplierSales: loadingSS,
+  warehouseProducts, warehouseStock, warehouseLocations,
+}) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  const [suppliers,     loadingSup] = useCollection(companyId, "suppliers",     "name");
-  const [supplierSales, loadingSS]  = useCollection(companyId, "supplierSales", "createdAt");
+  // "suppliers", "supplierSales" y los 3 catálogos de almacén YA NO se
+  // suscriben acá — llegan como prop desde InventorySystem.jsx (los de
+  // almacén se comparten también con WarehouseModule.jsx y
+  // MovementsModule.jsx), en vez de que este módulo abra 5 suscripciones
+  // independientes a exactamente los mismos datos.
   // "transactions" se deja SIN límite a propósito acá: `supplierOrders` más
   // abajo muestra el historial COMPLETO de compras con un proveedor
   // específico (no solo lo reciente) — capar esto truncaría silenciosamente
@@ -47,16 +54,6 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
   // alimenta un gráfico de "últimos N períodos".)
   const [transactions]              = useCollection(companyId, "transactions",  "createdAt");
 
-  const [warehouseProducts,  setWarehouseProducts]  = useState([]);
-  const [warehouseStock,     setWarehouseStock]     = useState([]);
-  const [warehouseLocations, setWarehouseLocations] = useState([]);
-  useEffect(() => {
-    if (!companyId) return;
-    const u1 = subscribeToWarehouseProducts(companyId, setWarehouseProducts);
-    const u2 = subscribeToWarehouseStock(companyId, setWarehouseStock);
-    const u3 = subscribeToLocations(companyId, setWarehouseLocations);
-    return () => { u1(); u2(); u3(); };
-  }, [companyId]);
   const stockByProduct = useMemo(() => {
     const map = {};
     warehouseStock.forEach(s => {
