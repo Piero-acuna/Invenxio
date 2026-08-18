@@ -53,8 +53,12 @@ export async function adjustWarehouseStock(companyId, { productId, productName, 
   return data; // nuevo qty
 }
 
-export function subscribeToWarehouseMovements(companyId, onData) {
-  return subscribeToCollection(companyId, "warehouse_movements", onData, "createdAt");
+export function subscribeToWarehouseMovements(companyId, onData, limit = 500) {
+  // limit=500: es un historial que solo crece — HistorialTab.jsx únicamente
+  // filtra/muestra una lista, no calcula ningún total histórico completo,
+  // así que traer solo los 500 movimientos más recientes no cambia nada que
+  // se vea, y evita descargar años de movimientos en cada carga.
+  return subscribeToCollection(companyId, "warehouse_movements", onData, "createdAt", limit);
 }
 
 export function subscribeToWarehouseProducts(companyId, onData) {

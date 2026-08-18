@@ -39,6 +39,12 @@ const SuppliersModule = ({ companyId, userName, canManageSuppliers, canDelete, c
   const currencySymbol = companyCurrency.currencySymbol;
   const [suppliers,     loadingSup] = useCollection(companyId, "suppliers",     "name");
   const [supplierSales, loadingSS]  = useCollection(companyId, "supplierSales", "createdAt");
+  // "transactions" se deja SIN límite a propósito acá: `supplierOrders` más
+  // abajo muestra el historial COMPLETO de compras con un proveedor
+  // específico (no solo lo reciente) — capar esto truncaría silenciosamente
+  // compras viejas de proveedores con relación larga. (Compárese con
+  // MovementsModule.jsx, que sí puede capar su propia copia porque ahí solo
+  // alimenta un gráfico de "últimos N períodos".)
   const [transactions]              = useCollection(companyId, "transactions",  "createdAt");
 
   const [warehouseProducts,  setWarehouseProducts]  = useState([]);

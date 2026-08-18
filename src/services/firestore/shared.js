@@ -81,7 +81,7 @@ export const uniqueChannelName = (base) => `${base}:${Date.now()}:${channelSeq++
  * que el subscribeToCollection original de Firestore: (companyId, colName,
  * onData, orderField) → unsubscribe().
  */
-export function subscribeToCollection(companyId, table, onData, orderField = "createdAt") {
+export function subscribeToCollection(companyId, table, onData, orderField = "createdAt", limit = null) {
   // BUG QUE ESTO EVITA: los módulos llaman a este hook con el mismo nombre
   // "camelCase" que usaba la colección de Firestore (ej. "supplierSales",
   // "warehouseMovements"), pero las tablas reales en Postgres están en
@@ -98,11 +98,21 @@ export function subscribeToCollection(companyId, table, onData, orderField = "cr
   let cancelled = false;
 
   async function fetchAll() {
-    const { data, error } = await supabase
+    let query = supabase
       .from(tableName)
       .select("*")
       .eq("company_id", companyId)
       .order(orderCol, { ascending: false });
+    // `limit`: sin esto, cada carga (y cada evento de realtime — una fila
+    // nueva dispara una re-consulta de TODA la tabla) descarga la tabla
+    // completa de la empresa entera, sin importar cuánto haya crecido. Para
+    // catálogos (products, suppliers, ubicaciones) eso es correcto — se
+    // necesitan todos. Para tablas tipo "historial" (transactions,
+    // warehouse_movements) que solo crecen con el tiempo, quien llama puede
+    // pasar un límite razonable (ver MovementsModule.jsx / SuppliersModule.jsx)
+    // para traer solo lo reciente en vez de años de historial cada vez.
+    if (limit) query = query.limit(limit);
+    const { data, error } = await query;
     if (error) {
       console.error(`[supabase] subscribeToCollection(${tableName}):`, error);
       return;

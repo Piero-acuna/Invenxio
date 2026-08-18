@@ -33,6 +33,11 @@ export default function DashboardModule({ companyId, userName, companyName, perm
   const money = (n) => formatMoney(n, companyCurrency.currencySymbol);
   // ── Datos de Inventario (tienda) y Movimientos ─────────────────────────────
   const [products,     loadingProd] = useCollection(companyId, "products",     "name");
+  // "transactions" SIN límite a propósito: el ranking de "más y menos
+  // vendidos" de abajo (topProducts) es histórico completo, no solo
+  // reciente — capar esto le daría un ranking incorrecto. (Compárese con
+  // MovementsModule.jsx, que sí capa su propia copia de "transactions"
+  // porque ahí solo alimenta un gráfico de periodo reciente.)
   const [transactions, loadingTx]   = useCollection(companyId, "transactions", "createdAt");
 
   // ── Datos de Proveedores ────────────────────────────────────────────────────

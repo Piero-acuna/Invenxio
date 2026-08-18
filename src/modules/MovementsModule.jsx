@@ -25,9 +25,17 @@ import { formatMoney } from "../utils/currency";
 const MovementsModule = ({ companyId, userName, canPurchase, canSell, canViewFinance, billing }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
+  // limit=500 en "transactions" y "warehouseMovements": acá solo alimentan
+  // la lista/gráfico de "reciente" del Historial (TransactionHistory.jsx
+  // agrupa por período — últimos N días/semanas), nunca un total histórico
+  // completo, así que no hace falta descargar la tabla entera cada vez.
+  // OJO: DashboardModule.jsx SÍ necesita el histórico COMPLETO de
+  // "transactions" para su ranking de "más vendidos" (histórico, todas las
+  // ventas) — por eso su propio useCollection("transactions") se dejó
+  // deliberadamente SIN límite; no es un descuido, es a propósito.
   const [products,     loadingP] = useCollection(companyId, "products",     "name");
-  const [transactions, loadingT] = useCollection(companyId, "transactions", "createdAt");
-  const [warehouseMovements] = useCollection(companyId, "warehouseMovements", "createdAt");
+  const [transactions, loadingT] = useCollection(companyId, "transactions", "createdAt", 500);
+  const [warehouseMovements] = useCollection(companyId, "warehouseMovements", "createdAt", 500);
   const [supplierSales]      = useCollection(companyId, "supplierSales",     "createdAt");
 
   const innerTabs = [

@@ -7,7 +7,7 @@
 import { useState, useEffect } from "react";
 import { subscribeToCollection } from "../services/firestoreService";
 
-export function useCollection(companyId, colName, orderField = "createdAt") {
+export function useCollection(companyId, colName, orderField = "createdAt", limit = null) {
   const [items,   setItems]   = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -16,8 +16,8 @@ export function useCollection(companyId, colName, orderField = "createdAt") {
     const unsub = subscribeToCollection(companyId, colName, data => {
       setItems(data);
       setLoading(false);
-    }, orderField);
+    }, orderField, limit);
     return unsub;
-  }, [companyId, colName, orderField]);
+  }, [companyId, colName, orderField, limit]);
   return [items, loading];
 }
