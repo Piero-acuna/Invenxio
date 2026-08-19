@@ -12,7 +12,7 @@ import { useState, useMemo, useEffect } from "react";
 import { Plus } from "lucide-react";
 import {
   addSupplier, updateSupplier, deleteSupplier,
-  recordWarehousePurchase,
+  recordWarehousePurchase, recordPurchase,
   updateSupplierSaleStatus, sellWarehouseToSupplier, cancelSupplierSale,
   addWarehouseProduct, updateWarehouseProduct,
   getNextInvoiceNumber,
@@ -38,6 +38,7 @@ const SuppliersModule = ({
   suppliers, loadingSuppliers: loadingSup,
   supplierSales, loadingSupplierSales: loadingSS,
   warehouseProducts, warehouseStock, warehouseLocations,
+  products = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -88,81 +89,96 @@ const SuppliersModule = ({
     () => transactions.filter(t => t.type === "compra" && t.target === "almacen"),
     [transactions]
   );
-  const [pForm,    setPForm]    = useState({ supplier: "", product: null, productSearch: "", locationId: "", buyMode: "empaque", packCount: "", unitCost: "", note: "" });
+  const [pForm,    setPForm]    = useState({ supplier: "", buyMode: "empaque", product: null, productSearch: "", locationId: "", packCount: "", unitCost: "", note: "" });
   const [pSaving,  setPSaving]  = useState(false);
   const [pSuccess, setPSuccess] = useState(false);
   const [pError,   setPError]   = useState("");
   const [pMsg,     setPMsg]     = useState("");
+  // "Por Empaque" busca en el catálogo de ALMACÉN (warehouseProducts) — la
+  // compra entra como stock de almacén, en una ubicación.
+  // "Por Unidad" busca en el catálogo de INVENTARIO (products, la tienda) —
+  // la compra suma directo al stock de tienda, sin ubicación.
   const pFiltered = pForm.productSearch && !pForm.product
-    ? warehouseProducts.filter(p => p.name?.toLowerCase().includes(pForm.productSearch.toLowerCase()))
+    ? (pForm.buyMode === "unidad" ? products : warehouseProducts)
+        .filter(p => p.name?.toLowerCase().includes(pForm.productSearch.toLowerCase()))
     : [];
 
   const handleSupplierPurchase = async () => {
     setPError(""); setPMsg("");
-    if (!pForm.supplier || !pForm.product || !pForm.locationId || !pForm.packCount || !pForm.unitCost) return;
+    if (!pForm.supplier || !pForm.product || !pForm.packCount || !pForm.unitCost) return;
+    if (pForm.buyMode === "empaque" && !pForm.locationId) return;
     setPSaving(true);
     try {
-      const sup   = suppliers.find(s => s.name === pForm.supplier);
-      const loc   = warehouseLocations.find(l => l.id === pForm.locationId);
-      // "Por Unidad" vs "Por Empaque": lo que el usuario tipeó en el
-      // formulario se convierte SIEMPRE a su equivalente en empaques antes
-      // de guardar nada — el stock del almacén (warehouse_stock.qty) se
-      // cuenta en empaques por diseño (ver ProductosTab.jsx), pero admite
-      // hasta 3 decimales, así que comprar por unidad no pierde precisión:
-      // 50 unidades de un producto de 24 por caja = 2.083 cajas. El total
-      // en dinero da exactamente igual sea por el camino que sea.
-      const packQtyOfProduct = Number(pForm.product?.packQty) || 1;
-      const enteredQty  = Number(pForm.packCount);
-      const enteredCost = Number(pForm.unitCost);
-      const qty  = pForm.buyMode === "unidad" ? enteredQty / packQtyOfProduct : enteredQty;
-      const cost = pForm.buyMode === "unidad" ? enteredCost * packQtyOfProduct : enteredCost;
+      const sup  = suppliers.find(s => s.name === pForm.supplier);
+      const qty  = Number(pForm.packCount);
+      const cost = Number(pForm.unitCost);
 
-      let targetProduct = pForm.product;
-      let msg = "";
-      const storedCost = pForm.product.cost != null ? Number(pForm.product.cost) : null;
-
-      if (storedCost === null) {
-        await updateWarehouseProduct(companyId, pForm.product.id, { cost });
-        msg = `Costo de referencia registrado: ${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}.`;
-      } else if (Math.round(storedCost * 100) !== Math.round(cost * 100)) {
-        const newName = `${pForm.product.name} (${formatMoney(cost, currencySymbol)})`;
-        // addWarehouseProduct devuelve el id (string) del nuevo producto, no
-        // un objeto — antes se leía `newRef.id` (undefined en un string), lo
-        // que mandaba p_warehouse_product_id vacío a record_warehouse_purchase
-        // y Postgres respondía "Could not find the function... in the schema
-        // cache" (parecía un problema de la base de datos, pero era este id
-        // vacío).
-        const newProductId = await addWarehouseProduct(companyId, {
-          name: newName,
-          sku: pForm.product.sku || "",
+      if (pForm.buyMode === "unidad") {
+        // ── Compra por unidad → INVENTARIO (tienda) ──────────────────────
+        // Directo a products.stock, sin pasar por almacén ni ubicaciones —
+        // usa la misma RPC que ya usa el resto de la app para compras de
+        // tienda (record_purchase), acá conectada por primera vez a un
+        // proveedor específico.
+        const total = qty * cost;
+        await recordPurchase(companyId, {
+          supplierId: sup?.id || "", supplierName: pForm.supplier,
+          productId: pForm.product.id, productName: pForm.product.name, sku: pForm.product.sku || "",
           description: pForm.product.description || "",
-          packName: pForm.product.packName,
-          packQty: pForm.product.packQty,
-          unitPrice: pForm.product.unitPrice || null,
-          cost,
+          qty, unitCost: cost, total, note: pForm.note, userName,
         });
-        targetProduct = { id: newProductId, name: newName, sku: pForm.product.sku, description: pForm.product.description, packName: pForm.product.packName, packQty: pForm.product.packQty };
-        msg = `⚠️ El costo ingresado (${formatMoney(cost, currencySymbol)}) no coincide con el registrado para "${pForm.product.name}" (${formatMoney(storedCost, currencySymbol)}). Se creó un nuevo producto de almacén: "${newName}" y la compra se registró ahí.`;
+        setPSuccess(true);
+        setPMsg(`Compra registrada: ${qty} unidades de "${pForm.product.name}" a ${formatMoney(cost, currencySymbol)} c/u.`);
+        await emitInvoice({
+          partyName: pForm.supplier,
+          items: [{ name: pForm.product.name, description: pForm.product.description || "", qty, unitPrice: cost, total }],
+          total, note: pForm.note, operationType: "compra",
+        });
       } else {
-        msg = `✅ El costo coincide con el registrado (${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}).`;
-      }
+        // ── Compra por empaque → ALMACÉN (comportamiento existente) ──────
+        const loc = warehouseLocations.find(l => l.id === pForm.locationId);
+        let targetProduct = pForm.product;
+        let msg = "";
+        const storedCost = pForm.product.cost != null ? Number(pForm.product.cost) : null;
 
-      const total = await recordWarehousePurchase(companyId, {
-        supplierId: sup?.id || "", supplierName: pForm.supplier,
-        warehouseProductId: targetProduct.id, warehouseProductName: targetProduct.name, sku: targetProduct.sku || "",
-        description: targetProduct.description || pForm.product.description || "",
-        locationId: pForm.locationId, locationName: loc?.name || "",
-        packCount: qty, packName: targetProduct.packName, packQty: targetProduct.packQty,
-        unitCost: cost, note: pForm.note, userName,
-      });
-      setPSuccess(true);
-      setPMsg(msg);
-      await emitInvoice({
-        partyName: pForm.supplier,
-        items: [{ name: targetProduct.name, description: targetProduct.description || pForm.product.description || "", qty, unitPrice: cost, total }],
-        total, note: pForm.note, operationType: "compra",
-      });
-      setTimeout(() => { setPSuccess(false); setPMsg(""); setPForm({ supplier: "", product: null, productSearch: "", locationId: "", buyMode: "empaque", packCount: "", unitCost: "", note: "" }); }, 5000);
+        if (storedCost === null) {
+          await updateWarehouseProduct(companyId, pForm.product.id, { cost });
+          msg = `Costo de referencia registrado: ${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}.`;
+        } else if (Math.round(storedCost * 100) !== Math.round(cost * 100)) {
+          const newName = `${pForm.product.name} (${formatMoney(cost, currencySymbol)})`;
+          // addWarehouseProduct devuelve el id (string) del nuevo producto,
+          // no un objeto.
+          const newProductId = await addWarehouseProduct(companyId, {
+            name: newName,
+            sku: pForm.product.sku || "",
+            description: pForm.product.description || "",
+            packName: pForm.product.packName,
+            packQty: pForm.product.packQty,
+            unitPrice: pForm.product.unitPrice || null,
+            cost,
+          });
+          targetProduct = { id: newProductId, name: newName, sku: pForm.product.sku, description: pForm.product.description, packName: pForm.product.packName, packQty: pForm.product.packQty };
+          msg = `⚠️ El costo ingresado (${formatMoney(cost, currencySymbol)}) no coincide con el registrado para "${pForm.product.name}" (${formatMoney(storedCost, currencySymbol)}). Se creó un nuevo producto de almacén: "${newName}" y la compra se registró ahí.`;
+        } else {
+          msg = `✅ El costo coincide con el registrado (${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}).`;
+        }
+
+        const total = await recordWarehousePurchase(companyId, {
+          supplierId: sup?.id || "", supplierName: pForm.supplier,
+          warehouseProductId: targetProduct.id, warehouseProductName: targetProduct.name, sku: targetProduct.sku || "",
+          description: targetProduct.description || pForm.product.description || "",
+          locationId: pForm.locationId, locationName: loc?.name || "",
+          packCount: qty, packName: targetProduct.packName, packQty: targetProduct.packQty,
+          unitCost: cost, note: pForm.note, userName,
+        });
+        setPSuccess(true);
+        setPMsg(msg);
+        await emitInvoice({
+          partyName: pForm.supplier,
+          items: [{ name: targetProduct.name, description: targetProduct.description || pForm.product.description || "", qty, unitPrice: cost, total }],
+          total, note: pForm.note, operationType: "compra",
+        });
+      }
+      setTimeout(() => { setPSuccess(false); setPMsg(""); setPForm({ supplier: "", buyMode: "empaque", product: null, productSearch: "", locationId: "", packCount: "", unitCost: "", note: "" }); }, 5000);
     } catch (err) {
       setPError(logAndGetErrorMessage(err, "Error al registrar compra a proveedor:", "Error al registrar la compra."));
     }

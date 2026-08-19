@@ -340,7 +340,8 @@ export default function InventoryApp() {
                     canViewFinance={perms.verMetricas} billing={billing}
                     suppliers={suppliers} loadingSuppliers={loadingSuppliers}
                     supplierSales={supplierSales} loadingSupplierSales={loadingSupplierSales}
-                    warehouseProducts={warehouseProducts} warehouseStock={stock} warehouseLocations={locations} />
+                    warehouseProducts={warehouseProducts} warehouseStock={stock} warehouseLocations={locations}
+                    products={products} />
                 )}
               </Suspense>
             )}
