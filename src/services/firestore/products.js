@@ -64,6 +64,24 @@ export function subscribeToProductHistory(companyId, productId, onData, maxEntri
   };
 }
 
+/**
+ * Borra permanentemente las variantes de `baseName` (producto duplicado por
+ * un costo de compra distinto — ver utils/productDuplicates.js) que se
+ * quedaron en 0 stock, siempre que alguna otra variante hermana siga
+ * teniendo stock. RPC con SECURITY DEFINER (ver
+ * 0012_cleanup_zero_stock_duplicates.sql) porque quien registra la compra
+ * no necesariamente tiene el permiso 'eliminar_registros' que exige el
+ * borrado manual normal. Devuelve cuántos productos se borraron.
+ */
+export async function cleanupZeroStockProductDuplicates(companyId, baseName) {
+  const { data, error } = await supabase.rpc("cleanup_zero_stock_products", {
+    p_company: companyId,
+    p_base_name: baseName,
+  });
+  assertNoError(error, "cleanupZeroStockProductDuplicates");
+  return data || 0;
+}
+
 /** Ajuste manual de stock — RPC atómica con row-lock (ver 0003_functions.sql). */
 export async function adjustProductStock(companyId, productId, { type, qty, user }) {
   const { data, error } = await supabase.rpc("adjust_product_stock", {

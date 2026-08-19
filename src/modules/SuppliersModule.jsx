@@ -14,12 +14,17 @@ import {
   addSupplier, updateSupplier, deleteSupplier,
   recordWarehousePurchase, recordPurchase,
   updateSupplierSaleStatus, sellWarehouseToSupplier, cancelSupplierSale,
-  addWarehouseProduct, updateWarehouseProduct,
+  addProduct, addWarehouseProduct, updateWarehouseProduct,
+  cleanupZeroStockProductDuplicates, cleanupZeroStockWarehouseDuplicates,
   getNextInvoiceNumber,
 } from "../services/firestoreService";
 import { exportToExcel } from "../utils/exportExcel";
 import { generateInvoicePDF } from "../utils/generateInvoicePDF";
 import { logAndGetErrorMessage } from "../utils/errors";
+import {
+  getBaseProductName, buildDuplicateProductName,
+  buildCostVsPriceNote, appendDescriptionNote,
+} from "../utils/productDuplicates";
 import { useCollection } from "../hooks/useCollection";
 import SupplierListTab from "../components/suppliers/SupplierListTab";
 import SupplierSaleTab from "../components/suppliers/SupplierSaleTab";
@@ -112,29 +117,78 @@ const SuppliersModule = ({
       const sup  = suppliers.find(s => s.name === pForm.supplier);
       const qty  = Number(pForm.packCount);
       const cost = Number(pForm.unitCost);
+      // Nombre "de familia" del producto elegido — si ya era en sí mismo un
+      // duplicado por costo (ej. "Coca Cola 500ml (S/ 3.20)"), esto lo
+      // vuelve a llevar a "Coca Cola 500ml" para poder agrupar/limpiar a
+      // TODAS sus variantes, no solo a la elegida ahora mismo.
+      const baseName = getBaseProductName(pForm.product.name);
 
       if (pForm.buyMode === "unidad") {
         // ── Compra por unidad → INVENTARIO (tienda) ──────────────────────
-        // Directo a products.stock, sin pasar por almacén ni ubicaciones —
-        // usa la misma RPC que ya usa el resto de la app para compras de
-        // tienda (record_purchase), acá conectada por primera vez a un
-        // proveedor específico.
+        // Si el costo no coincide con el que ya tenía el producto, se crea
+        // un producto de inventario nuevo (mismo criterio que "Por
+        // Empaque" en Almacén) en vez de sobrescribir el costo del
+        // existente — así no se mezclan compras a costos distintos bajo el
+        // mismo registro, y la descripción queda anotando si ese costo
+        // nuevo deja o no margen contra el precio de venta vigente.
+        let targetProduct = pForm.product;
+        let msg = "";
+        const storedCost = pForm.product.cost != null ? Number(pForm.product.cost) : 0;
+
+        if (!storedCost) {
+          // Sin costo previo real (0 o null) — primera compra de este
+          // producto: no hace falta duplicar, solo se registra la compra
+          // (record_purchase ya deja cost = este costo en products).
+          msg = `Compra registrada: ${qty} unidades de "${pForm.product.name}" a ${formatMoney(cost, currencySymbol)} c/u.`;
+        } else if (Math.round(storedCost * 100) !== Math.round(cost * 100)) {
+          const newName = buildDuplicateProductName(baseName, cost, currencySymbol);
+          const costNote = buildCostVsPriceNote(cost, pForm.product.price, currencySymbol);
+          const newDescription = appendDescriptionNote(pForm.product.description, costNote);
+          const newProductId = await addProduct(companyId, {
+            name: newName,
+            sku: pForm.product.sku || "",
+            description: newDescription,
+            category: pForm.product.category || "",
+            price: Number(pForm.product.price) || 0,
+            cost,
+            stock: 0,
+            minStock: pForm.product.minStock ?? 0,
+            packQty: pForm.product.packQty || null,
+          });
+          targetProduct = { id: newProductId, name: newName, sku: pForm.product.sku, description: newDescription };
+          msg = `⚠️ El costo ingresado (${formatMoney(cost, currencySymbol)}) no coincide con el registrado para "${pForm.product.name}" (${formatMoney(storedCost, currencySymbol)}). Se creó un nuevo producto de inventario: "${newName}" y la compra se registró ahí.${costNote ? ` ${costNote}` : ""}`;
+        } else {
+          msg = `✅ El costo coincide con el registrado (${formatMoney(cost, currencySymbol)} por unidad).`;
+        }
+
         const total = qty * cost;
         await recordPurchase(companyId, {
           supplierId: sup?.id || "", supplierName: pForm.supplier,
-          productId: pForm.product.id, productName: pForm.product.name, sku: pForm.product.sku || "",
-          description: pForm.product.description || "",
+          productId: targetProduct.id, productName: targetProduct.name, sku: targetProduct.sku || "",
+          description: targetProduct.description || pForm.product.description || "",
           qty, unitCost: cost, total, note: pForm.note, userName,
         });
+
+        // Si alguna variante hermana de este producto se quedó en 0 stock
+        // (por esta compra apuntando a la otra variante, o por ventas
+        // previas), se borra permanentemente — solo si otra variante
+        // (la que se acaba de comprar, u otra) sigue con stock.
+        try {
+          const removed = await cleanupZeroStockProductDuplicates(companyId, baseName);
+          if (removed > 0) msg += ` Se eliminó permanentemente ${removed} producto${removed === 1 ? "" : "s"} duplicado${removed === 1 ? "" : "s"} de "${baseName}" que se había${removed === 1 ? "" : "n"} quedado en 0 stock.`;
+        } catch (cleanupErr) {
+          console.error("Error limpiando duplicados de inventario sin stock:", cleanupErr);
+        }
+
         setPSuccess(true);
-        setPMsg(`Compra registrada: ${qty} unidades de "${pForm.product.name}" a ${formatMoney(cost, currencySymbol)} c/u.`);
+        setPMsg(msg);
         await emitInvoice({
           partyName: pForm.supplier,
-          items: [{ name: pForm.product.name, description: pForm.product.description || "", qty, unitPrice: cost, total }],
+          items: [{ name: targetProduct.name, description: targetProduct.description || pForm.product.description || "", qty, unitPrice: cost, total }],
           total, note: pForm.note, operationType: "compra",
         });
       } else {
-        // ── Compra por empaque → ALMACÉN (comportamiento existente) ──────
+        // ── Compra por empaque → ALMACÉN ──────────────────────────────────
         const loc = warehouseLocations.find(l => l.id === pForm.locationId);
         let targetProduct = pForm.product;
         let msg = "";
@@ -144,20 +198,22 @@ const SuppliersModule = ({
           await updateWarehouseProduct(companyId, pForm.product.id, { cost });
           msg = `Costo de referencia registrado: ${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}.`;
         } else if (Math.round(storedCost * 100) !== Math.round(cost * 100)) {
-          const newName = `${pForm.product.name} (${formatMoney(cost, currencySymbol)})`;
+          const newName = buildDuplicateProductName(baseName, cost, currencySymbol);
+          const costNote = buildCostVsPriceNote(cost, pForm.product.unitPrice, currencySymbol);
+          const newDescription = appendDescriptionNote(pForm.product.description, costNote);
           // addWarehouseProduct devuelve el id (string) del nuevo producto,
           // no un objeto.
           const newProductId = await addWarehouseProduct(companyId, {
             name: newName,
             sku: pForm.product.sku || "",
-            description: pForm.product.description || "",
+            description: newDescription,
             packName: pForm.product.packName,
             packQty: pForm.product.packQty,
             unitPrice: pForm.product.unitPrice || null,
             cost,
           });
-          targetProduct = { id: newProductId, name: newName, sku: pForm.product.sku, description: pForm.product.description, packName: pForm.product.packName, packQty: pForm.product.packQty };
-          msg = `⚠️ El costo ingresado (${formatMoney(cost, currencySymbol)}) no coincide con el registrado para "${pForm.product.name}" (${formatMoney(storedCost, currencySymbol)}). Se creó un nuevo producto de almacén: "${newName}" y la compra se registró ahí.`;
+          targetProduct = { id: newProductId, name: newName, sku: pForm.product.sku, description: newDescription, packName: pForm.product.packName, packQty: pForm.product.packQty };
+          msg = `⚠️ El costo ingresado (${formatMoney(cost, currencySymbol)}) no coincide con el registrado para "${pForm.product.name}" (${formatMoney(storedCost, currencySymbol)}). Se creó un nuevo producto de almacén: "${newName}" y la compra se registró ahí.${costNote ? ` ${costNote}` : ""}`;
         } else {
           msg = `✅ El costo coincide con el registrado (${formatMoney(cost, currencySymbol)} por ${pForm.product.packName}).`;
         }
@@ -170,6 +226,16 @@ const SuppliersModule = ({
           packCount: qty, packName: targetProduct.packName, packQty: targetProduct.packQty,
           unitCost: cost, note: pForm.note, userName,
         });
+
+        // Misma limpieza que arriba, pero para variantes de almacén (el
+        // stock ahí es la suma de warehouse_stock en todas sus ubicaciones).
+        try {
+          const removed = await cleanupZeroStockWarehouseDuplicates(companyId, baseName);
+          if (removed > 0) msg += ` Se eliminó permanentemente ${removed} producto${removed === 1 ? "" : "s"} de almacén duplicado${removed === 1 ? "" : "s"} de "${baseName}" que se había${removed === 1 ? "" : "n"} quedado en 0 stock.`;
+        } catch (cleanupErr) {
+          console.error("Error limpiando duplicados de almacén sin stock:", cleanupErr);
+        }
+
         setPSuccess(true);
         setPMsg(msg);
         await emitInvoice({

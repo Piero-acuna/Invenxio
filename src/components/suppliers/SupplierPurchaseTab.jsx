@@ -85,8 +85,8 @@ export default function SupplierPurchaseTab({
                 )}
                 {pForm.product && (
                   <p className="text-[11px] text-slate-500 mt-1.5">
-                    {pForm.product.cost != null
-                      ? <>Costo registrado: <span className="text-amber-400 font-mono">{formatMoney(pForm.product.cost, currencySymbol)}</span> por {pForm.buyMode === "unidad" ? "unidad" : pForm.product.packName}. {pForm.buyMode === "empaque" ? "Si ingresas un costo distinto, se creará un producto nuevo." : ""}</>
+                    {pForm.product.cost
+                      ? <>Costo registrado: <span className="text-amber-400 font-mono">{formatMoney(pForm.product.cost, currencySymbol)}</span> por {pForm.buyMode === "unidad" ? "unidad" : pForm.product.packName}. Si ingresas un costo distinto, se creará un producto nuevo (y si el anterior se queda en 0 stock, se eliminará automáticamente).</>
                       : "Sin costo registrado todavía — el que ingreses ahora quedará como referencia."}
                   </p>
                 )}

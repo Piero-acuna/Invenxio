@@ -86,6 +86,21 @@ export async function deleteWarehouseProduct(companyId, productId) {
   assertNoError(error, "deleteWarehouseProduct");
 }
 
+/**
+ * Igual que cleanupZeroStockProductDuplicates() pero para productos de
+ * almacén (ver 0012_cleanup_zero_stock_duplicates.sql) — el stock de un
+ * producto de almacén es la suma de warehouse_stock en todas sus
+ * ubicaciones, así que esta limpieza vive en su propia función de Postgres.
+ */
+export async function cleanupZeroStockWarehouseDuplicates(companyId, baseName) {
+  const { data, error } = await supabase.rpc("cleanup_zero_stock_warehouse_products", {
+    p_company: companyId,
+    p_base_name: baseName,
+  });
+  assertNoError(error, "cleanupZeroStockWarehouseDuplicates");
+  return data || 0;
+}
+
 /** Registra un movimiento y ajusta stock — todo en una sola RPC atómica. */
 export async function addWarehouseMovement(companyId, {
   type, productId, productName, sku, qty,

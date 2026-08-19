@@ -64,6 +64,7 @@ export {
   deleteProduct,
   adjustProductStock,
   subscribeToProductHistory,
+  cleanupZeroStockProductDuplicates,
 } from "./firestore/products";
 
 export {
@@ -97,6 +98,7 @@ export {
   addWarehouseProduct,
   updateWarehouseProduct,
   deleteWarehouseProduct,
+  cleanupZeroStockWarehouseDuplicates,
   sendWarehouseToInventory,
   addWarehouseMovement,
 } from "./firestore/warehouse";
