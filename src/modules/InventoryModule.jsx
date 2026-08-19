@@ -12,10 +12,9 @@ import {
 } from "lucide-react";
 import {
   addProduct, updateProduct, deleteProduct, adjustProductStock,
-  subscribeToProductHistory,
+  subscribeToProductHistory, addWarehouseProduct, addWarehouseMovement,
 } from "../services/firestoreService";
 import { logAndGetErrorMessage } from "../utils/errors";
-import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
 import { BarcodeDisplay } from "../components/BarcodeUI";
 import { generateBarcode } from "../lib/barcode";
@@ -41,11 +40,16 @@ import { calcProfit, calcMarginPercent } from "../utils/finance";
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 1 — INVENTORY
 // ══════════════════════════════════════════════════════════════════════════════
-const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, canViewFinance }) => {
+const InventoryModule = ({
+  companyId, userName, canCreate, canEdit, canDelete, canViewFinance,
+  products, loadingProducts: loadingP, suppliers, locations = [],
+}) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  const [products, loadingP] = useCollection(companyId, "products", "name");
-  const [suppliers]          = useCollection(companyId, "suppliers", "name");
+  // "products" y "suppliers" YA NO se suscriben acá — llegan como prop
+  // desde InventorySystem.jsx (compartidos también con el Dashboard), en
+  // vez de que este módulo abra su propia suscripción independiente a
+  // exactamente los mismos datos.
 
   const [search,          setSearch]          = useState("");
   const [statusFilter,    setStatusFilter]    = useState("Todos");
@@ -80,6 +84,11 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
   const [newProd, setNewProd] = useState({
     name: "", sku: "", description: "", price: "", cost: "", stock: "", minStock: "4",
     packQty: "", barcode: "",
+    // "Enviar a Almacén" opcional — ver EnviarAlmacenSection más abajo. Los
+    // productos de almacén ahora SOLO se crean desde acá (Inventario), nunca
+    // directo en la pestaña de Almacén, para que el catálogo de tienda sea
+    // siempre la única fuente de verdad de qué productos existen.
+    sendToWarehouse: false, whLocationId: "", whPackName: "", whPackQty: "", whPackCount: "",
   });
   const [saving,      setSaving]      = useState(false);
   const [saveError,   setSaveError]   = useState("");
@@ -202,15 +211,26 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
 
   const handleAddProduct = async () => {
     if (!newProd.name || !newProd.sku) return;
+    // Si "Enviar a Almacén" está marcado, validamos ANTES de crear nada —
+    // así no queda un producto de tienda huérfano si falta un dato del
+    // envío a almacén.
+    if (newProd.sendToWarehouse) {
+      if (!newProd.whLocationId) { setSaveError("Selecciona a qué ubicación del almacén enviarlo."); return; }
+      if (!newProd.whPackName.trim()) { setSaveError('Indica el nombre del empaque para el almacén (ej: "Caja").'); return; }
+      if (!newProd.whPackQty || Number(newProd.whPackQty) <= 0) { setSaveError("Indica cuántas unidades trae cada empaque de almacén."); return; }
+      if (!newProd.whPackCount || Number(newProd.whPackCount) <= 0) { setSaveError("Indica la cantidad de empaques a enviar al almacén."); return; }
+    }
     setSaving(true); setSaveError("");
     try {
       const packQty  = Number(newProd.packQty) || 0;
       const stock    = packQty > 0 ? (Number(newProd.stock) || 0) * packQty : (Number(newProd.stock) || 0);
       const minStock = Number(newProd.minStock) || 0;
+      const sku = newProd.sku;
+      const description = newProd.description || "";
       await addProduct(companyId, {
         name: newProd.name,
-        sku:  newProd.sku,
-        description: newProd.description || "",
+        sku,
+        description,
         price:    Number(newProd.price) || 0,
         cost:     Number(newProd.cost) || 0,
         stock,
@@ -219,8 +239,38 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
         barcode:  newProd.barcode || generateBarcode(),
         status:   stock === 0 ? "Agotado" : stock <= minStock ? "Stock Bajo" : "En Stock",
       });
+
+      // Enviar a Almacén: crea el producto de almacén (mismo nombre/SKU/
+      // descripción que el de tienda, recién creado arriba) y su stock
+      // inicial en la ubicación elegida — mismo flujo de 2 pasos que usaba
+      // ProductosTab.jsx antes de que se quitara la creación directa ahí.
+      if (newProd.sendToWarehouse) {
+        try {
+          const loc = locations.find(l => l.id === newProd.whLocationId);
+          const newWhProductId = await addWarehouseProduct(companyId, {
+            name: newProd.name, sku, description,
+            packName: newProd.whPackName.trim(), packQty: Number(newProd.whPackQty), unitPrice: null,
+          });
+          await addWarehouseMovement(companyId, {
+            type: "entrada",
+            productId: newWhProductId, productName: newProd.name, sku,
+            qty: Number(newProd.whPackCount),
+            toLocationId: newProd.whLocationId, toLocationName: loc?.name || "",
+            reason: "Stock inicial (desde Inventario)",
+            userName,
+            packName: newProd.whPackName.trim(), packQty: Number(newProd.whPackQty),
+          });
+        } catch (whErr) {
+          // El producto de TIENDA ya se guardó bien — esto es un error
+          // aparte, se lo mostramos pero sin deshacer lo ya guardado (el
+          // usuario puede enviarlo a almacén manualmente después si hace
+          // falta, no hay nada roto).
+          setSaveError(logAndGetErrorMessage(whErr, "Producto creado, pero hubo un error al enviarlo a Almacén:", "Producto creado, pero no se pudo enviar a Almacén. Puedes intentarlo de nuevo desde Almacén → Mis Productos → Agregar Stock."));
+        }
+      }
+
       setShowNewProd(false);
-      setNewProd({ name: "", sku: nextSku, description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" });
+      setNewProd({ name: "", sku: nextSku, description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "", sendToWarehouse: false, whLocationId: "", whPackName: "", whPackQty: "", whPackCount: "" });
     } catch (err) {
       setSaveError(logAndGetErrorMessage(err, "Error al crear producto:"));
     }
@@ -618,6 +668,50 @@ const InventoryModule = ({ companyId, userName, canCreate, canEdit, canDelete, c
                     Generar
                   </button>
                 </div>
+              </div>
+              {/* Enviar a Almacén (opcional) — único lugar donde se puede
+                  crear un producto de almacén: elegir la ubicación acá lo
+                  crea junto con el producto de tienda, en un solo paso. */}
+              <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={newProd.sendToWarehouse}
+                    onChange={e => setNewProd(p => ({ ...p, sendToWarehouse: e.target.checked }))}
+                    className="w-4 h-4 accent-amber-500" />
+                  <span className="text-sm font-semibold text-white flex items-center gap-1.5">📦 También enviarlo a Almacén</span>
+                </label>
+                {newProd.sendToWarehouse && (
+                  locations.length === 0 ? (
+                    <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg">
+                      Todavía no tienes ninguna ubicación creada en Almacén → Mapa. Crea una primero para poder enviar productos ahí.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="col-span-2">
+                        <label className="text-xs text-slate-400 mb-1 block">Ubicación *</label>
+                        <select value={newProd.whLocationId} onChange={e => setNewProd(p => ({ ...p, whLocationId: e.target.value }))}
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors">
+                          <option value="">Selecciona…</option>
+                          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Nombre del empaque *</label>
+                        <input value={newProd.whPackName} onChange={e => setNewProd(p => ({ ...p, whPackName: e.target.value }))} placeholder="Ej: Caja"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Unidades por empaque *</label>
+                        <input type="number" min="1" value={newProd.whPackQty} onChange={e => setNewProd(p => ({ ...p, whPackQty: e.target.value }))} placeholder="Ej: 24"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs text-slate-400 mb-1 block">Cantidad inicial (empaques) *</label>
+                        <input type="number" min="1" value={newProd.whPackCount} onChange={e => setNewProd(p => ({ ...p, whPackCount: e.target.value }))} placeholder="Ej: 5"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                    </div>
+                  )
+                )}
               </div>
               {saveError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-3">{saveError}</p>}
               <div className="flex gap-3 mt-5">

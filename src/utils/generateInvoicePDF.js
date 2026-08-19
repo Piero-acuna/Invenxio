@@ -56,6 +56,7 @@ function setText(pdf, c) { pdf.setTextColor(c[0], c[1], c[2]); }
 export function generateInvoicePDF({
   billing, docType = "VENTA", partyLabel = "Cliente", partyName = "",
   items = [], total = 0, invoiceNumber, note = "", currencySymbol = "S/",
+  paymentMethod,
   // `operationType`: "compra" | "venta" — reemplaza a la ambigüedad de
   // docType==="PROVEEDOR" (que antes se usaba tanto para una COMPRA a un
   // proveedor como para una VENTA a un proveedor, imprimiendo "COMPROBANTE
@@ -157,6 +158,19 @@ export function generateInvoicePDF({
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(10.5);
   pdf.text(partyName || "—", marginX + 4, y + 11);
+  // Método de pago: solo aplica a ventas (nunca a compras a proveedor, que
+  // no tienen este concepto) — se muestra alineado a la derecha, dentro de
+  // la misma caja que Cliente, para no ocupar espacio vertical extra.
+  if (!isCompra && paymentMethod) {
+    setText(pdf, COLOR.sub);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7.5);
+    pdf.text("MÉTODO DE PAGO", rightX - 4, y + 5.5, { align: "right" });
+    setText(pdf, COLOR.ink);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10.5);
+    pdf.text(paymentMethod, rightX - 4, y + 11, { align: "right" });
+  }
   y += partyBoxH + 9;
 
   // ── Tabla de ítems ──

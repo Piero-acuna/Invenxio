@@ -1,50 +1,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // src/components/warehouse/ProductosTab.jsx
-// Pestaña "📦 Mis Productos" (catálogo propio del almacén). Aquí el almacén
-// define SUS artículos: nombre, código, cómo vienen empacados (ej. "Caja" de
-// 24 unidades), precio por unidad, y dónde están guardados. Este catálogo es
-// independiente del inventario de la tienda: nada de lo que se crea aquí
-// aparece automáticamente en la tienda hasta que se use "Enviar a Tienda". El
-// stock siempre se cuenta en EMPAQUES completos (cajas), nunca en unidades
-// sueltas. Extraído de WarehouseModule.jsx al separar el monolito.
+// Pestaña "📦 Mis Productos" (catálogo propio del almacén). Aquí se EDITA lo
+// que ya existe (nombre, empaque, precio, stock) y se gestiona — pero ya NO
+// se crean productos nuevos desde acá: eso ahora vive solo en Inventario
+// (InventoryModule.jsx → "Nuevo Producto" → "También enviarlo a Almacén"),
+// para que el catálogo de tienda sea siempre la única fuente de verdad de
+// qué productos existen. El stock siempre se cuenta en EMPAQUES completos
+// (cajas), nunca en unidades sueltas. Extraído de WarehouseModule.jsx al
+// separar el monolito.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import {
-  Plus, X, Edit3, Trash2, Search, RefreshCw, CheckCircle, MapPin, Boxes, FileSpreadsheet,
+  X, Edit3, Trash2, Search, RefreshCw, CheckCircle, MapPin, Boxes, Plus, Info,
 } from "lucide-react";
-import {
-  addWarehouseProduct, updateWarehouseProduct, deleteWarehouseProduct,
-  addWarehouseMovement,
-} from "../../services/firestoreService";
+import { updateWarehouseProduct, deleteWarehouseProduct } from "../../services/firestoreService";
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
-import ImportExcelModal from "../ImportExcelModal";
 import { useAuth } from "../../contexts/AuthContext";
 import { formatMoney } from "../../utils/currency";
-import { calcUnitsFromPacks } from "../../utils/packaging";
-
-// ── Plantilla de importación por Excel ───────────────────────────────────
-// Mismos campos que el alta manual de arriba (handleSave, rama !editItem):
-// nombre, empaque, y stock inicial en una ubicación — no se puede crear un
-// producto de almacén sin elegir dónde queda guardado. "SKU / Código" y
-// "Precio de Referencia" son opcionales.
-const WAREHOUSE_IMPORT_HEADERS = [
-  "SKU / Código", "Nombre", "Descripción", "Nombre del Empaque",
-  "Unidades por Empaque", "Precio de Referencia", "Ubicación", "Cantidad Inicial (empaques)",
-];
-function warehouseImportExample(firstLocationName) {
-  const loc = firstLocationName || "Almacén Principal";
-  return [
-    { "SKU / Código": "", "Nombre": "Arroz Extra", "Descripción": "Saco de arroz", "Nombre del Empaque": "Saco", "Unidades por Empaque": 50, "Precio de Referencia": 4.2, "Ubicación": loc, "Cantidad Inicial (empaques)": 20 },
-    { "SKU / Código": "", "Nombre": "Aceite Vegetal", "Descripción": "", "Nombre del Empaque": "Caja", "Unidades por Empaque": 12, "Precio de Referencia": 9.5, "Ubicación": loc, "Cantidad Inicial (empaques)": 10 },
-  ];
-}
 
 export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", packQty: "", unitPrice: "", locationId: "", packCount: "" };
+  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", packQty: "", unitPrice: "" };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form,     setForm]     = useState(EMPTY_FORM);
@@ -55,7 +34,6 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
 
   function setF(key, val) { setForm(f => ({ ...f, [key]: val })); }
 
-  function openNew() { setEditItem(null); setForm(EMPTY_FORM); setError(""); setShowForm(true); }
   function openEdit(p) {
     setEditItem(p);
     setForm({ ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", description: p.description || "", packName: p.packName || "", packQty: p.packQty ?? "", unitPrice: p.unitPrice ?? "" });
@@ -66,10 +44,6 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
     if (!form.name.trim())              { setError("El nombre es obligatorio."); return; }
     if (!form.packName.trim())          { setError("Indica la unidad de empaque (ej: Caja, Paquete)."); return; }
     if (!form.packQty || Number(form.packQty) <= 0) { setError("Indica cuántas unidades trae cada empaque."); return; }
-    if (!editItem) {
-      if (!form.locationId)             { setError("Selecciona la ubicación donde está guardado."); return; }
-      if (!form.packCount || Number(form.packCount) <= 0) { setError("Indica la cantidad de empaques (cajas)."); return; }
-    }
     setError(""); setSaving(true);
     try {
       const payload = {
@@ -80,104 +54,10 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
         packQty: Number(form.packQty),
         unitPrice: form.unitPrice ? Number(form.unitPrice) : null,
       };
-      if (editItem) {
-        await updateWarehouseProduct(companyId, editItem.id, payload);
-      } else {
-        // addWarehouseProduct devuelve el id (string) del nuevo producto, no
-        // un objeto — antes se leía `ref.id` (undefined en un string), lo que
-        // mandaba p_product_id vacío a la RPC y Postgres respondía "Could not
-        // find the function... in the schema cache" (parecía un problema de
-        // la base de datos, pero era este id vacío).
-        const newProductId = await addWarehouseProduct(companyId, payload);
-        // Stock inicial: siempre junto con la creación, contado en empaques.
-        const loc = locations.find(l => l.id === form.locationId);
-        await addWarehouseMovement(companyId, {
-          type: "entrada",
-          productId: newProductId, productName: payload.name, sku: payload.sku,
-          qty: Number(form.packCount),
-          toLocationId: form.locationId, toLocationName: loc?.name || "",
-          reason: "Stock inicial",
-          userName,
-          packName: payload.packName, packQty: payload.packQty,
-        });
-      }
+      await updateWarehouseProduct(companyId, editItem.id, payload);
       setShowForm(false); setEditItem(null); setForm(EMPTY_FORM);
     } catch (e) { setError(logAndGetErrorMessage(e, "Error al guardar producto de almacén:", "Error al guardar el producto.")); }
     setSaving(false);
-  }
-
-  // ── Importar Excel ────────────────────────────────────────────────────
-  const [showImport, setShowImport] = useState(false);
-
-  // Valida todas las filas del Excel de una vez: necesita el conjunto
-  // completo de `locations` (para resolver el nombre de ubicación escrito
-  // en la planilla a un locationId real) y detectar SKUs repetidos dentro
-  // del propio archivo, igual que en Inventario.
-  function parseWarehouseImportRows(rawRows) {
-    const existingSkus = new Set(warehouseProducts.map(p => (p.sku || "").trim().toLowerCase()).filter(Boolean));
-    const usedInBatch = new Set();
-    const locationByName = new Map(locations.map(l => [(l.name || "").trim().toLowerCase(), l]));
-
-    return rawRows.map((raw) => {
-      const name = String(raw["Nombre"] ?? "").trim();
-      const label = name || "(sin nombre)";
-      const sku = String(raw["SKU / Código"] ?? "").trim();
-      const packName = String(raw["Nombre del Empaque"] ?? "").trim();
-      const packQty = Number(raw["Unidades por Empaque"]);
-      const locationNameRaw = String(raw["Ubicación"] ?? "").trim();
-      const packCount = Number(raw["Cantidad Inicial (empaques)"]);
-
-      if (!name) return { ok: false, label, error: "Falta el nombre del producto." };
-      if (!packName) return { ok: false, label, error: 'Falta "Nombre del Empaque" (ej: Caja, Saco, Paquete).' };
-      if (!packQty || Number.isNaN(packQty) || packQty <= 0) {
-        return { ok: false, label, error: '"Unidades por Empaque" debe ser un número mayor a 0.' };
-      }
-      if (sku && (existingSkus.has(sku.toLowerCase()) || usedInBatch.has(sku.toLowerCase()))) {
-        return { ok: false, label, error: `El SKU "${sku}" ya existe (en tu catálogo de almacén, o repetido en este mismo archivo).` };
-      }
-      if (!locationNameRaw) return { ok: false, label, error: 'Falta la "Ubicación".' };
-      const location = locationByName.get(locationNameRaw.toLowerCase());
-      if (!location) {
-        return { ok: false, label, error: `No existe una ubicación llamada "${locationNameRaw}". Créala primero en Almacén → Mapa (el nombre debe coincidir).` };
-      }
-      if (!packCount || Number.isNaN(packCount) || packCount <= 0) {
-        return { ok: false, label, error: '"Cantidad Inicial (empaques)" debe ser un número mayor a 0.' };
-      }
-      if (sku) usedInBatch.add(sku.toLowerCase());
-
-      const unitPriceRaw = raw["Precio de Referencia"];
-      const unitPrice = unitPriceRaw === "" || unitPriceRaw === null || unitPriceRaw === undefined ? null : Number(unitPriceRaw);
-
-      return {
-        ok: true,
-        label: `${name}${sku ? ` (SKU ${sku})` : ""} — ${location.name}`,
-        values: {
-          name, sku, description: String(raw["Descripción"] ?? "").trim(),
-          packName, packQty, unitPrice,
-          locationId: location.id, locationName: location.name,
-          packCount,
-        },
-      };
-    });
-  }
-
-  // Mismo flujo de 2 pasos que handleSave (rama !editItem): crea el
-  // producto y, con el id que devuelve, registra el stock inicial como un
-  // movimiento de "entrada" en la ubicación elegida.
-  async function importWarehouseProductRow(values) {
-    const newProductId = await addWarehouseProduct(companyId, {
-      name: values.name, sku: values.sku, description: values.description,
-      packName: values.packName, packQty: values.packQty, unitPrice: values.unitPrice,
-    });
-    await addWarehouseMovement(companyId, {
-      type: "entrada",
-      productId: newProductId, productName: values.name, sku: values.sku,
-      qty: values.packCount,
-      toLocationId: values.locationId, toLocationName: values.locationName,
-      reason: "Stock inicial (importado)",
-      userName,
-      packName: values.packName, packQty: values.packQty,
-    });
   }
 
   async function handleDelete(p) {
@@ -194,8 +74,10 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-2 p-3 bg-sky-500/10 border border-sky-500/30 rounded-xl text-xs text-sky-300">
-        <Boxes size={14} className="flex-shrink-0 mt-0.5" />
-        <span>Este es el catálogo propio del almacén. Es independiente del inventario de la tienda — para abastecer la tienda usa <strong>Registrar Movimiento → Enviar a Tienda</strong>. El stock se cuenta siempre en empaques completos (cajas).</span>
+        <Info size={14} className="flex-shrink-0 mt-0.5" />
+        <span>
+          Los productos nuevos se crean desde <strong>Inventario → Nuevo Producto → "También enviarlo a Almacén"</strong>, eligiendo a qué ubicación va. Acá puedes editar los que ya existen, agregarles más stock, o revisar dónde está guardado cada uno.
+        </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -204,20 +86,12 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar…"
             className="w-full pl-8 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
         </div>
-        <button onClick={() => setShowImport(true)}
-          className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-xs rounded-lg transition-colors">
-          <FileSpreadsheet size={13} /> Importar Excel
-        </button>
-        <button onClick={openNew}
-          className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold text-xs rounded-lg transition-colors">
-          <Plus size={13} /> Nuevo Producto de Almacén
-        </button>
       </div>
 
-      {showForm && (
+      {showForm && editItem && (
         <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-bold text-white">{editItem ? "Editar producto" : "Nuevo producto de almacén"}</p>
+            <p className="text-sm font-bold text-white">Editar producto</p>
             <button onClick={() => { setShowForm(false); setEditItem(null); }} className="text-slate-500 hover:text-slate-300"><X size={15}/></button>
           </div>
           {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg">{error}</p>}
@@ -253,39 +127,20 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
               <textarea value={form.description} onChange={e => setF("description", e.target.value)} placeholder="Ej: Presentación de 500ml, vidrio retornable…" rows={2}
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors resize-none"/>
             </div>
-
-            {!editItem && (<>
-              <div className="col-span-2 sm:col-span-1">
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Ubicación *</label>
-                <select value={form.locationId} onChange={e => setF("locationId", e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-amber-500 transition-colors">
-                  <option value="">Selecciona…</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Cantidad de empaques *</label>
-                <input type="number" min="1" value={form.packCount} onChange={e => setF("packCount", e.target.value)} placeholder="Ej: 5"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
-              </div>
-            </>)}
           </div>
-          {!editItem && form.packQty && form.packCount && (
-            <p className="text-[11px] text-amber-400/80">📦 {form.packCount} {form.packName || "empaques"} × {form.packQty} und = {calcUnitsFromPacks(form.packCount, form.packQty)} unidades en total</p>
-          )}
           <div className="flex gap-2">
             <button onClick={() => { setShowForm(false); setEditItem(null); }} className="flex-1 py-2 text-xs border border-slate-700 text-slate-400 rounded-lg hover:border-slate-600 transition-colors">Cancelar</button>
             <button onClick={handleSave} disabled={saving}
               className="flex-1 py-2 text-xs bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 text-slate-900 disabled:text-slate-500 font-semibold rounded-lg transition-colors flex items-center justify-center gap-1">
               {saving ? <RefreshCw size={12} className="animate-spin"/> : <CheckCircle size={12}/>}
-              {editItem ? "Guardar cambios" : "Crear producto"}
+              Guardar cambios
             </button>
           </div>
         </div>
       )}
 
       {filtered.length === 0 ? (
-        <EmptyState icon={<Boxes size={28}/>} msg={warehouseProducts.length === 0 ? "Aún no has creado productos de almacén." : "Sin resultados para tu búsqueda."} sub={warehouseProducts.length === 0 ? "Crea el primero con el botón de arriba." : ""} />
+        <EmptyState icon={<Boxes size={28}/>} msg={warehouseProducts.length === 0 ? "Aún no hay productos enviados al almacén." : "Sin resultados para tu búsqueda."} sub={warehouseProducts.length === 0 ? "Créalos desde Inventario → Nuevo Producto → \"También enviarlo a Almacén\"." : ""} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map(p => {
@@ -335,18 +190,6 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
       {stockFor && (
         <AddStockModal product={stockFor} locations={locations} companyId={companyId} userName={userName} onClose={() => setStockFor(null)} />
       )}
-
-      <ImportExcelModal
-        open={showImport}
-        onClose={() => setShowImport(false)}
-        title="Importar productos de almacén desde Excel"
-        templateFilename="Invenxio_Plantilla_Almacen"
-        templateHeaders={WAREHOUSE_IMPORT_HEADERS}
-        templateExample={warehouseImportExample(locations[0]?.name)}
-        parseRows={parseWarehouseImportRows}
-        onImportRow={importWarehouseProductRow}
-        itemNoun="productos"
-      />
     </div>
   );
 }

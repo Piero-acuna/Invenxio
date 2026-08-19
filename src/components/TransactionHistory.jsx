@@ -70,6 +70,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         amount: t.total ?? null,
         party: t.supplier || t.client || "—",
         note: t.note || "",
+        paymentMethod: t.paymentMethod || null,
         raw: t,
       });
     });
@@ -296,6 +297,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         total:       t.amount ?? 0,
         invoiceNumber,
         note:        t.note || "",
+        paymentMethod: isVenta ? t.paymentMethod : undefined,
         currencySymbol,
       });
     } catch (err) {
@@ -529,6 +531,11 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                           {TYPE_LABEL[t.type] || t.type}
                         </span>
                         {t.status === "Cancelado" && <span className="ml-1.5 text-[10px] text-red-400">(Cancelada)</span>}
+                        {t.type === "venta" && t.paymentMethod && (
+                          <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-700/60 text-slate-300 border border-slate-600 whitespace-nowrap">
+                            {t.paymentMethod}
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-slate-400 font-mono whitespace-nowrap">{t.date}{t.time ? <span className="text-slate-600"> · {t.time}</span> : ""}</td>
                       <td className="py-2.5 px-3">

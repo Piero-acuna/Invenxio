@@ -67,7 +67,7 @@ export async function recordWarehousePurchase(companyId, {
  * cada ítem lo recalcula el servidor a partir del producto real — nunca
  * confía en item.price del carrito (ver comentario en record_sale() SQL).
  */
-export async function recordSale(companyId, { cartItems, userName, clientName = "Cliente" }) {
+export async function recordSale(companyId, { cartItems, userName, clientName = "Cliente", paymentMethod = "Efectivo" }) {
   const cart = cartItems.map((item) => ({
     id: item.id,
     name: item.name,
@@ -84,6 +84,7 @@ export async function recordSale(companyId, { cartItems, userName, clientName = 
     p_cart: cart,
     p_user_name: userName,
     p_client_name: clientName || "Cliente",
+    p_payment_method: paymentMethod || "Efectivo",
   });
   assertNoError(error, "recordSale");
   return data; // array de ids de transacción creadas

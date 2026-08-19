@@ -318,7 +318,7 @@ export default function InventoryApp() {
                     canCreate={perms.crearProductos} canEdit={perms.editarProductos}
                     canDelete={perms.eliminarRegistros} canViewFinance={perms.verMetricas}
                     products={products} loadingProducts={loadingProducts}
-                    suppliers={suppliers} />
+                    suppliers={suppliers} locations={locations} />
                 )}
                 {activeTab === "movements" && (
                   <MovementsModule companyId={companyId} userName={userName}

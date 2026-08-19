@@ -60,6 +60,7 @@ const MovementsModule = ({
   const [sSaving,      setSSaving]      = useState(false);
   const [sSuccess,     setSSuccess]     = useState(false);
   const [clientName,   setClientName]   = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("Efectivo");
   const [invoiceMsg,   setInvoiceMsg]   = useState("");
   const [saleError,    setSaleError]    = useState("");
   const [showScanner,  setShowScanner]  = useState(false);
@@ -103,7 +104,7 @@ const MovementsModule = ({
     setInvoiceMsg("");
     setSaleError("");
     try {
-      await recordSale(companyId, { cartItems: cart, userName });
+      await recordSale(companyId, { cartItems: cart, userName, clientName, paymentMethod });
       setSSuccess(true);
 
       // ── Emitir comprobante de venta en PDF (sin terceros) ──
@@ -119,6 +120,7 @@ const MovementsModule = ({
             partyName: clientName.trim() || "Cliente varios",
             items: cart.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
             total: cartTotal,
+            paymentMethod,
             currencySymbol,
           });
         } catch (invErr) {
@@ -127,7 +129,7 @@ const MovementsModule = ({
         }
       }
 
-      setTimeout(() => { setSSuccess(false); setCart([]); setClientName(""); setInvoiceMsg(""); }, 3500);
+      setTimeout(() => { setSSuccess(false); setCart([]); setClientName(""); setPaymentMethod("Efectivo"); setInvoiceMsg(""); }, 3500);
     } catch (err) {
       // recordSale ahora valida el stock real del servidor dentro de la
       // transacción y lanza un Error con un mensaje legible cuando no
@@ -261,6 +263,23 @@ const MovementsModule = ({
                 <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Cliente (opcional)</label>
                 <input value={clientName} onChange={e => setClientName(e.target.value)} placeholder="Cliente varios"
                   className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+              </div>
+              <div className="mb-3">
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Método de pago</label>
+                {/* flex-wrap: en pantallas angostas los 4 botones pasan a 2
+                    filas de 2 en vez de desbordar o achicarse demasiado. */}
+                <div className="flex flex-wrap gap-1.5">
+                  {["Efectivo", "Yape", "Transferencia", "Tarjeta"].map(m => (
+                    <button key={m} type="button" onClick={() => setPaymentMethod(m)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                        paymentMethod === m
+                          ? "bg-amber-500 border-amber-500 text-slate-900"
+                          : "bg-slate-700/60 border-slate-600 text-slate-300 hover:border-slate-500"
+                      }`}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="flex justify-between items-center mb-4">
                 <span className="text-slate-400 text-sm">Total</span>
