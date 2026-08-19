@@ -88,7 +88,7 @@ const SuppliersModule = ({
     () => transactions.filter(t => t.type === "compra" && t.target === "almacen"),
     [transactions]
   );
-  const [pForm,    setPForm]    = useState({ supplier: "", product: null, productSearch: "", locationId: "", packCount: "", unitCost: "", note: "" });
+  const [pForm,    setPForm]    = useState({ supplier: "", product: null, productSearch: "", locationId: "", buyMode: "empaque", packCount: "", unitCost: "", note: "" });
   const [pSaving,  setPSaving]  = useState(false);
   const [pSuccess, setPSuccess] = useState(false);
   const [pError,   setPError]   = useState("");
@@ -104,8 +104,18 @@ const SuppliersModule = ({
     try {
       const sup   = suppliers.find(s => s.name === pForm.supplier);
       const loc   = warehouseLocations.find(l => l.id === pForm.locationId);
-      const qty   = Number(pForm.packCount);
-      const cost  = Number(pForm.unitCost);
+      // "Por Unidad" vs "Por Empaque": lo que el usuario tipeó en el
+      // formulario se convierte SIEMPRE a su equivalente en empaques antes
+      // de guardar nada — el stock del almacén (warehouse_stock.qty) se
+      // cuenta en empaques por diseño (ver ProductosTab.jsx), pero admite
+      // hasta 3 decimales, así que comprar por unidad no pierde precisión:
+      // 50 unidades de un producto de 24 por caja = 2.083 cajas. El total
+      // en dinero da exactamente igual sea por el camino que sea.
+      const packQtyOfProduct = Number(pForm.product?.packQty) || 1;
+      const enteredQty  = Number(pForm.packCount);
+      const enteredCost = Number(pForm.unitCost);
+      const qty  = pForm.buyMode === "unidad" ? enteredQty / packQtyOfProduct : enteredQty;
+      const cost = pForm.buyMode === "unidad" ? enteredCost * packQtyOfProduct : enteredCost;
 
       let targetProduct = pForm.product;
       let msg = "";
@@ -152,7 +162,7 @@ const SuppliersModule = ({
         items: [{ name: targetProduct.name, description: targetProduct.description || pForm.product.description || "", qty, unitPrice: cost, total }],
         total, note: pForm.note, operationType: "compra",
       });
-      setTimeout(() => { setPSuccess(false); setPMsg(""); setPForm({ supplier: "", product: null, productSearch: "", locationId: "", packCount: "", unitCost: "", note: "" }); }, 5000);
+      setTimeout(() => { setPSuccess(false); setPMsg(""); setPForm({ supplier: "", product: null, productSearch: "", locationId: "", buyMode: "empaque", packCount: "", unitCost: "", note: "" }); }, 5000);
     } catch (err) {
       setPError(logAndGetErrorMessage(err, "Error al registrar compra a proveedor:", "Error al registrar la compra."));
     }

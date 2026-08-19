@@ -269,7 +269,7 @@ const MovementsModule = ({
                 {/* flex-wrap: en pantallas angostas los 4 botones pasan a 2
                     filas de 2 en vez de desbordar o achicarse demasiado. */}
                 <div className="flex flex-wrap gap-1.5">
-                  {["Efectivo", "Yape", "Transferencia", "Tarjeta"].map(m => (
+                  {["Efectivo", "Yape", "Transferencia"].map(m => (
                     <button key={m} type="button" onClick={() => setPaymentMethod(m)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
                         paymentMethod === m

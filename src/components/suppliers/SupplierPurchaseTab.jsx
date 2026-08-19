@@ -99,18 +99,43 @@ export default function SupplierPurchaseTab({
                 </select>
               </div>
             )}
+            {pForm.product && (
+              <div>
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Comprar…</label>
+                <div className="flex gap-1.5">
+                  {[
+                    { id: "empaque", label: `Por Empaque (${pForm.product.packName || "empaque"} de ${pForm.product.packQty})` },
+                    { id: "unidad",  label: "Por Unidad" },
+                  ].map(opt => (
+                    <button key={opt.id} type="button" onClick={() => setPForm(p => ({ ...p, buyMode: opt.id }))}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                        pForm.buyMode === opt.id
+                          ? "bg-amber-500 border-amber-500 text-slate-900"
+                          : "bg-slate-700/60 border-slate-600 text-slate-300 hover:border-slate-500"
+                      }`}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Cantidad de {pForm.product?.packName || "empaques"} *</label>
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Cantidad de {pForm.buyMode === "unidad" ? "unidades" : (pForm.product?.packName || "empaques")} *</label>
                 <input type="number" value={pForm.packCount} onChange={e => setPForm(p => ({ ...p, packCount: e.target.value }))} min="1" placeholder="0"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
               </div>
               <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Costo por {pForm.product?.packName || "empaque"} ({currencySymbol}) *</label>
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Costo por {pForm.buyMode === "unidad" ? "unidad" : (pForm.product?.packName || "empaque")} ({currencySymbol}) *</label>
                 <input type="number" value={pForm.unitCost} onChange={e => setPForm(p => ({ ...p, unitCost: e.target.value }))} min="0" placeholder="0.00"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
               </div>
             </div>
+            {pForm.buyMode === "unidad" && pForm.product && Number(pForm.packCount) > 0 && (
+              <p className="text-[11px] text-slate-500 -mt-2">
+                = {(Number(pForm.packCount) / (Number(pForm.product.packQty) || 1)).toFixed(3)} {pForm.product.packName || "empaques"} en stock
+              </p>
+            )}
             <div>
               <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Nota</label>
               <input value={pForm.note} onChange={e => setPForm(p => ({ ...p, note: e.target.value }))} placeholder="Observaciones…"

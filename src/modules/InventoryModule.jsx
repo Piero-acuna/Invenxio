@@ -557,6 +557,31 @@ const InventoryModule = ({
               <button onClick={() => setShowNewProd(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><X size={18} /></button>
             </div>
             <div className="p-5 overflow-y-auto max-h-[70vh] space-y-4">
+              {/* Destino — primera fila del formulario: elegir de entrada si
+                  el producto es solo de tienda, o también va a Almacén (en
+                  cuyo caso más abajo aparecen los campos de ubicación). */}
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Destino</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setNewProd(p => ({ ...p, sendToWarehouse: false }))}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
+                      !newProd.sendToWarehouse
+                        ? "bg-amber-500 border-amber-500 text-slate-900"
+                        : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600"
+                    }`}>
+                    📋 Inventario
+                  </button>
+                  <button type="button" onClick={() => setNewProd(p => ({ ...p, sendToWarehouse: true }))}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
+                      newProd.sendToWarehouse
+                        ? "bg-amber-500 border-amber-500 text-slate-900"
+                        : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600"
+                    }`}>
+                    📦 Inventario + Almacén
+                  </button>
+                </div>
+              </div>
+
               {/* Identificación */}
               <div>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Identificación</p>
@@ -567,7 +592,7 @@ const InventoryModule = ({
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">SKU / Código interno * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable)</span></label>
+                    <label className="text-xs text-slate-400 mb-1 block">Código * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable{newProd.sendToWarehouse ? " — se usa igual en Almacén" : ""})</span></label>
                     <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: EL-001"
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
@@ -669,18 +694,13 @@ const InventoryModule = ({
                   </button>
                 </div>
               </div>
-              {/* Enviar a Almacén (opcional) — único lugar donde se puede
-                  crear un producto de almacén: elegir la ubicación acá lo
-                  crea junto con el producto de tienda, en un solo paso. */}
-              <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-3">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={newProd.sendToWarehouse}
-                    onChange={e => setNewProd(p => ({ ...p, sendToWarehouse: e.target.checked }))}
-                    className="w-4 h-4 accent-amber-500" />
-                  <span className="text-sm font-semibold text-white flex items-center gap-1.5">📦 También enviarlo a Almacén</span>
-                </label>
-                {newProd.sendToWarehouse && (
-                  locations.length === 0 ? (
+              {/* Datos de Almacén — solo aparece si se eligió "Inventario +
+                  Almacén" en la primera fila. El destino ya no se elige acá
+                  con un checkbox, se elige arriba. */}
+              {newProd.sendToWarehouse && (
+                <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-3">
+                  <p className="text-xs font-semibold text-white flex items-center gap-1.5">📦 Datos para Almacén</p>
+                  {locations.length === 0 ? (
                     <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg">
                       Todavía no tienes ninguna ubicación creada en Almacén → Mapa. Crea una primero para poder enviar productos ahí.
                     </p>
@@ -710,9 +730,9 @@ const InventoryModule = ({
                           className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
                     </div>
-                  )
-                )}
-              </div>
+                  )}
+                </div>
+              )}
               {saveError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-3">{saveError}</p>}
               <div className="flex gap-3 mt-5">
                 <button onClick={() => setShowNewProd(false)} className="flex-1 py-2.5 border border-slate-600 text-slate-400 rounded-xl text-sm hover:border-slate-500 transition-colors">Cancelar</button>
