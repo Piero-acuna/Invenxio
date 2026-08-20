@@ -41,8 +41,8 @@ import { calcProfit, calcMarginPercent } from "../utils/finance";
 // MODULE 1 — INVENTORY
 // ══════════════════════════════════════════════════════════════════════════════
 const InventoryModule = ({
-  companyId, userName, canCreate, canEdit, canDelete, canViewFinance,
-  products, loadingProducts: loadingP, suppliers, locations = [],
+  companyId, userName, canCreate, canEdit, canDelete, canViewFinance, canManageWarehouse,
+  products, loadingProducts: loadingP, suppliers, locations = [], warehouseProducts = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -81,14 +81,21 @@ const InventoryModule = ({
 
   // Nuevo producto
   const [showNewProd, setShowNewProd] = useState(false);
+  // "destino" reemplaza al viejo booleano sendToWarehouse: ahora Inventario
+  // y Almacén son dos catálogos independientes, cada uno con su propia
+  // numeración de código — elegir uno NO crea nada en el otro (antes,
+  // "Inventario + Almacén" creaba SIEMPRE el producto de tienda primero).
+  // name/sku/description se comparten entre ambos destinos porque solo uno
+  // está activo a la vez (nunca se muestran ni se guardan los dos juntos).
   const [newProd, setNewProd] = useState({
-    name: "", sku: "", description: "", price: "", cost: "", stock: "", minStock: "4",
-    packQty: "", barcode: "",
-    // "Enviar a Almacén" opcional — ver EnviarAlmacenSection más abajo. Los
-    // productos de almacén ahora SOLO se crean desde acá (Inventario), nunca
-    // directo en la pestaña de Almacén, para que el catálogo de tienda sea
-    // siempre la única fuente de verdad de qué productos existen.
-    sendToWarehouse: false, whLocationId: "", whPackName: "", whPackQty: "", whPackCount: "",
+    destino: "inventario", // "inventario" | "almacen"
+    name: "", sku: "", description: "",
+    // — solo Inventario —
+    price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "",
+    // — solo Almacén — "Precio de cada empaque" (whUnitPrice) es nuevo: antes
+    // quedaba sin definir hasta que alguien lo editaba luego en Almacén →
+    // Mis Productos.
+    whPackName: "Caja", whPackQty: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
   });
   const [saving,      setSaving]      = useState(false);
   const [saveError,   setSaveError]   = useState("");
@@ -118,6 +125,18 @@ const InventoryModule = ({
     // productos, crece a "1000" en vez de truncar.
     return String(next).padStart(3, "0");
   }, [products]);
+
+  // Igual que nextSku, pero contando SOLO warehouseProducts — Almacén es un
+  // catálogo independiente de Inventario, así que lleva su propia
+  // numeración "001", "002"... sin importar cuántos productos de tienda
+  // existan.
+  const nextWhSku = useMemo(() => {
+    const maxExisting = warehouseProducts.reduce((max, p) => {
+      const n = /^\d+$/.test(p.sku || "") ? parseInt(p.sku, 10) : 0;
+      return n > max ? n : max;
+    }, 0);
+    return String(maxExisting + 1).padStart(3, "0");
+  }, [warehouseProducts]);
 
   // ── Importar Excel ────────────────────────────────────────────────────
   const [showImport, setShowImport] = useState(false);
@@ -210,16 +229,48 @@ const InventoryModule = ({
   };
 
   const handleAddProduct = async () => {
-    if (!newProd.name || !newProd.sku) return;
-    // Si "Enviar a Almacén" está marcado, validamos ANTES de crear nada —
-    // así no queda un producto de tienda huérfano si falta un dato del
-    // envío a almacén.
-    if (newProd.sendToWarehouse) {
-      if (!newProd.whLocationId) { setSaveError("Selecciona a qué ubicación del almacén enviarlo."); return; }
-      if (!newProd.whPackName.trim()) { setSaveError('Indica el nombre del empaque para el almacén (ej: "Caja").'); return; }
-      if (!newProd.whPackQty || Number(newProd.whPackQty) <= 0) { setSaveError("Indica cuántas unidades trae cada empaque de almacén."); return; }
-      if (!newProd.whPackCount || Number(newProd.whPackCount) <= 0) { setSaveError("Indica la cantidad de empaques a enviar al almacén."); return; }
+    if (!newProd.name) return;
+    if (newProd.destino === "almacen") {
+      // ── Producto nuevo → SOLO Almacén (catálogo independiente) ────────
+      if (!canManageWarehouse) { setSaveError("No tienes permiso para gestionar Almacén."); return; }
+      if (!newProd.whLocationId) { setSaveError("Selecciona la ubicación de almacén."); return; }
+      if (!newProd.whPackName.trim()) { setSaveError('Indica el nombre de la unidad de empaque (ej: "Caja").'); return; }
+      if (!newProd.whPackQty || Number(newProd.whPackQty) <= 0) { setSaveError("Indica cuántas unidades trae cada empaque."); return; }
+      if (!newProd.whPackCount || Number(newProd.whPackCount) <= 0) { setSaveError("Indica la cantidad de empaques (stock inicial)."); return; }
+      setSaving(true); setSaveError("");
+      try {
+        const loc = locations.find(l => l.id === newProd.whLocationId);
+        const newWhProductId = await addWarehouseProduct(companyId, {
+          name: newProd.name,
+          sku: newProd.sku || nextWhSku,
+          description: newProd.description || "",
+          packName: newProd.whPackName.trim(),
+          packQty: Number(newProd.whPackQty),
+          unitPrice: newProd.whUnitPrice ? Number(newProd.whUnitPrice) : null,
+        });
+        await addWarehouseMovement(companyId, {
+          type: "entrada",
+          productId: newWhProductId, productName: newProd.name, sku: newProd.sku || nextWhSku,
+          qty: Number(newProd.whPackCount),
+          toLocationId: newProd.whLocationId, toLocationName: loc?.name || "",
+          reason: "Stock inicial",
+          userName,
+          packName: newProd.whPackName.trim(), packQty: Number(newProd.whPackQty),
+        });
+        setShowNewProd(false);
+        setNewProd(p => ({
+          ...p, name: "", sku: nextWhSku, description: "",
+          whPackName: "Caja", whPackQty: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
+        }));
+      } catch (err) {
+        setSaveError(logAndGetErrorMessage(err, "Error al crear producto de almacén:"));
+      }
+      setSaving(false);
+      return;
     }
+
+    // ── Producto nuevo → SOLO Inventario (tienda) ───────────────────────
+    if (!newProd.sku) return;
     setSaving(true); setSaveError("");
     try {
       const packQty  = Number(newProd.packQty) || 0;
@@ -239,38 +290,8 @@ const InventoryModule = ({
         barcode:  newProd.barcode || generateBarcode(),
         status:   stock === 0 ? "Agotado" : stock <= minStock ? "Stock Bajo" : "En Stock",
       });
-
-      // Enviar a Almacén: crea el producto de almacén (mismo nombre/SKU/
-      // descripción que el de tienda, recién creado arriba) y su stock
-      // inicial en la ubicación elegida — mismo flujo de 2 pasos que usaba
-      // ProductosTab.jsx antes de que se quitara la creación directa ahí.
-      if (newProd.sendToWarehouse) {
-        try {
-          const loc = locations.find(l => l.id === newProd.whLocationId);
-          const newWhProductId = await addWarehouseProduct(companyId, {
-            name: newProd.name, sku, description,
-            packName: newProd.whPackName.trim(), packQty: Number(newProd.whPackQty), unitPrice: null,
-          });
-          await addWarehouseMovement(companyId, {
-            type: "entrada",
-            productId: newWhProductId, productName: newProd.name, sku,
-            qty: Number(newProd.whPackCount),
-            toLocationId: newProd.whLocationId, toLocationName: loc?.name || "",
-            reason: "Stock inicial (desde Inventario)",
-            userName,
-            packName: newProd.whPackName.trim(), packQty: Number(newProd.whPackQty),
-          });
-        } catch (whErr) {
-          // El producto de TIENDA ya se guardó bien — esto es un error
-          // aparte, se lo mostramos pero sin deshacer lo ya guardado (el
-          // usuario puede enviarlo a almacén manualmente después si hace
-          // falta, no hay nada roto).
-          setSaveError(logAndGetErrorMessage(whErr, "Producto creado, pero hubo un error al enviarlo a Almacén:", "Producto creado, pero no se pudo enviar a Almacén. Puedes intentarlo de nuevo desde Almacén → Mis Productos → Agregar Stock."));
-        }
-      }
-
       setShowNewProd(false);
-      setNewProd({ name: "", sku: nextSku, description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "", sendToWarehouse: false, whLocationId: "", whPackName: "", whPackQty: "", whPackCount: "" });
+      setNewProd(p => ({ ...p, name: "", sku: nextSku, description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" }));
     } catch (err) {
       setSaveError(logAndGetErrorMessage(err, "Error al crear producto:"));
     }
@@ -364,7 +385,7 @@ const InventoryModule = ({
               className="flex items-center gap-2 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-sm rounded-lg transition-colors">
               <FileSpreadsheet size={15} /> <span className="hidden sm:inline">Importar</span> Excel
             </button>
-            <button onClick={() => { setShowNewProd(true); setSaveError(""); setNewProd(p => ({ ...p, sku: nextSku })); }}
+            <button onClick={() => { setShowNewProd(true); setSaveError(""); setNewProd(p => ({ ...p, destino: "inventario", sku: nextSku })); }}
               className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-sm rounded-lg transition-colors">
               <Plus size={15} /> Producto
             </button>
@@ -557,186 +578,215 @@ const InventoryModule = ({
               <button onClick={() => setShowNewProd(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><X size={18} /></button>
             </div>
             <div className="p-5 overflow-y-auto max-h-[70vh] space-y-4">
-              {/* Destino — primera fila del formulario: elegir de entrada si
-                  el producto es solo de tienda, o también va a Almacén (en
-                  cuyo caso más abajo aparecen los campos de ubicación). */}
+              {/* Destino — Inventario y Almacén son catálogos totalmente
+                  independientes: elegir uno NO crea nada en el otro, cada
+                  uno con su propia numeración de código. */}
               <div>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Destino</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setNewProd(p => ({ ...p, sendToWarehouse: false }))}
+                  <button type="button" onClick={() => { setNewProd(p => ({ ...p, destino: "inventario", sku: nextSku })); setSaveError(""); }}
                     className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
-                      !newProd.sendToWarehouse
+                      newProd.destino === "inventario"
                         ? "bg-amber-500 border-amber-500 text-slate-900"
                         : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600"
                     }`}>
                     📋 Inventario
                   </button>
-                  <button type="button" onClick={() => setNewProd(p => ({ ...p, sendToWarehouse: true }))}
-                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
-                      newProd.sendToWarehouse
+                  <button type="button" disabled={!canManageWarehouse}
+                    onClick={() => { setNewProd(p => ({ ...p, destino: "almacen", sku: nextWhSku })); setSaveError(""); }}
+                    title={!canManageWarehouse ? "No tienes permiso para gestionar Almacén" : undefined}
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                      newProd.destino === "almacen"
                         ? "bg-amber-500 border-amber-500 text-slate-900"
                         : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600"
                     }`}>
-                    📦 Inventario + Almacén
+                    📦 Almacén
                   </button>
                 </div>
               </div>
 
-              {/* Identificación */}
-              <div>
-                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Identificación</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2">
-                    <label className="text-xs text-slate-400 mb-1 block">Nombre del producto *</label>
-                    <input type="text" value={newProd.name} onChange={e => setNewProd(p => ({ ...p, name: e.target.value }))} placeholder="Ej: Galleta de chocolate 100g"
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                  </div>
+              {newProd.destino === "inventario" ? (
+                <>
+                  {/* Identificación */}
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Código * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable{newProd.sendToWarehouse ? " — se usa igual en Almacén" : ""})</span></label>
-                    <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: EL-001"
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Identificación</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="col-span-2">
+                        <label className="text-xs text-slate-400 mb-1 block">Nombre del producto *</label>
+                        <input type="text" value={newProd.name} onChange={e => setNewProd(p => ({ ...p, name: e.target.value }))} placeholder="Ej: Galleta de chocolate 100g"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Código * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable)</span></label>
+                        <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: EL-001"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Unidades por Empaque</label>
+                        <input type="number" min="1" value={newProd.packQty} onChange={e => setNewProd(p => ({ ...p, packQty: e.target.value }))} placeholder="Ej: 12"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
+                        <p className="text-[10px] text-slate-500 mb-1">Se muestra al vender y en el comprobante</p>
+                        <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: oreo 100g free" rows={2}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Unidades por Empaque</label>
-                    <input type="number" min="1" value={newProd.packQty} onChange={e => setNewProd(p => ({ ...p, packQty: e.target.value }))} placeholder="Ej: 12"
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
-                    <p className="text-[10px] text-slate-500 mb-1">Se muestra al vender y en el comprobante</p>
-                    <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: oreo 100g free" rows={2}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
-                  </div>
-                </div>
-              </div>
 
-              {/* Precios — sección destacada */}
-              {canViewFinance && (
-                <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">Precios</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
-                      <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente</p>
-                      <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
-                        className="w-full px-3 py-2 bg-slate-900 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
-                      <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor</p>
-                      <input type="number" min="0" step="0.01" value={newProd.cost} onChange={e => setNewProd(p => ({ ...p, cost: e.target.value }))} placeholder="0.00"
-                        className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 transition-colors" />
-                    </div>
-                  </div>
-                  {/* Margen calculado en tiempo real (ver src/utils/finance.js) */}
-                  {newProd.price > 0 && newProd.cost > 0 && (() => {
-                    const profit = calcProfit(newProd.price, newProd.cost);
-                    const margin = calcMarginPercent(newProd.price, newProd.cost);
-                    return (
-                      <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
-                        <span className="text-slate-400">Ganancia por unidad</span>
-                        <div className="text-right">
-                          <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>{formatMoney(profit, currencySymbol)}</span>
-                          <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>
+                  {/* Precios — sección destacada */}
+                  {canViewFinance && (
+                    <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider">Precios</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
+                          <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente</p>
+                          <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
+                            className="w-full px-3 py-2 bg-slate-900 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
+                          <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor</p>
+                          <input type="number" min="0" step="0.01" value={newProd.cost} onChange={e => setNewProd(p => ({ ...p, cost: e.target.value }))} placeholder="0.00"
+                            className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 transition-colors" />
                         </div>
                       </div>
-                    );
-                  })()}
-                </div>
-              )}
+                      {/* Margen calculado en tiempo real (ver src/utils/finance.js) */}
+                      {newProd.price > 0 && newProd.cost > 0 && (() => {
+                        const profit = calcProfit(newProd.price, newProd.cost);
+                        const margin = calcMarginPercent(newProd.price, newProd.cost);
+                        return (
+                          <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
+                            <span className="text-slate-400">Ganancia por unidad</span>
+                            <div className="text-right">
+                              <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>{formatMoney(profit, currencySymbol)}</span>
+                              <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
 
-              {/* Si no tiene finanzas, mostrar solo precio de venta */}
-              {!canViewFinance && (
-                <div>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Precio</p>
-                  <div>
-                    <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
-                    <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente por unidad</p>
-                    <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
-                      className="w-full px-3 py-2 bg-slate-800 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
-                  </div>
-                </div>
-              )}
+                  {/* Si no tiene finanzas, mostrar solo precio de venta */}
+                  {!canViewFinance && (
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Precio</p>
+                      <div>
+                        <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
+                        <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente por unidad</p>
+                        <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
+                          className="w-full px-3 py-2 bg-slate-800 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
+                      </div>
+                    </div>
+                  )}
 
-              {/* Stock */}
-              <div>
-                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
-                {Number(newProd.packQty) > 0 && (
-                  <p className="text-[11px] text-amber-400/80 mb-2">📦 Ingresa el stock inicial en cantidad de empaques ({newProd.packQty} und c/u); se convierte a unidades automáticamente.</p>
-                )}
-                <div className="grid grid-cols-2 gap-3">
+                  {/* Stock */}
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">{Number(newProd.packQty) > 0 ? "Stock inicial (empaques)" : "Stock inicial"}</label>
-                    <input type="number" min="0" value={newProd.stock} onChange={e => setNewProd(p => ({ ...p, stock: e.target.value }))} placeholder="0"
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                    {Number(newProd.packQty) > 0 && Number(newProd.stock) > 0 && (
-                      <p className="text-[10px] text-slate-500 mt-1">= {Number(newProd.stock) * Number(newProd.packQty)} unidades</p>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
+                    {Number(newProd.packQty) > 0 && (
+                      <p className="text-[11px] text-amber-400/80 mb-2">📦 Ingresa el stock inicial en cantidad de empaques ({newProd.packQty} und c/u); se convierte a unidades automáticamente.</p>
                     )}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">{Number(newProd.packQty) > 0 ? "Stock inicial (empaques)" : "Stock inicial"}</label>
+                        <input type="number" min="0" value={newProd.stock} onChange={e => setNewProd(p => ({ ...p, stock: e.target.value }))} placeholder="0"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                        {Number(newProd.packQty) > 0 && Number(newProd.stock) > 0 && (
+                          <p className="text-[10px] text-slate-500 mt-1">= {Number(newProd.stock) * Number(newProd.packQty)} unidades</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Stock mínimo</label>
+                        <p className="text-[10px] text-slate-500 mb-1">Alerta cuando baje de aquí</p>
+                        <input type="number" min="0" value={newProd.minStock} onChange={e => setNewProd(p => ({ ...p, minStock: e.target.value }))} placeholder="0"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Stock mínimo</label>
-                    <p className="text-[10px] text-slate-500 mb-1">Alerta cuando baje de aquí</p>
-                    <input type="number" min="0" value={newProd.minStock} onChange={e => setNewProd(p => ({ ...p, minStock: e.target.value }))} placeholder="0"
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                  </div>
-                </div>
-              </div>
 
-              {/* Código de barras */}
-              <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1 block flex items-center gap-1"><ScanBarcode size={11} />Código de Barras</label>
-                <div className="flex gap-2">
-                  <input value={newProd.barcode} onChange={e => setNewProd(p => ({ ...p, barcode: e.target.value }))} placeholder="Se genera automáticamente"
-                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                  <button onClick={() => setNewProd(p => ({ ...p, barcode: generateBarcode() }))}
-                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap">
-                    Generar
-                  </button>
-                </div>
-              </div>
-              {/* Datos de Almacén — solo aparece si se eligió "Inventario +
-                  Almacén" en la primera fila. El destino ya no se elige acá
-                  con un checkbox, se elige arriba. */}
-              {newProd.sendToWarehouse && (
-                <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-3">
-                  <p className="text-xs font-semibold text-white flex items-center gap-1.5">📦 Datos para Almacén</p>
+                  {/* Código de barras */}
+                  <div>
+                    <label className="text-xs text-slate-400 uppercase tracking-wider mb-1 block flex items-center gap-1"><ScanBarcode size={11} />Código de Barras</label>
+                    <div className="flex gap-2">
+                      <input value={newProd.barcode} onChange={e => setNewProd(p => ({ ...p, barcode: e.target.value }))} placeholder="Se genera automáticamente"
+                        className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      <button onClick={() => setNewProd(p => ({ ...p, barcode: generateBarcode() }))}
+                        className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap">
+                        Generar
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Producto de ALMACÉN — catálogo independiente: solo
+                      identificador de empaque, precio por empaque,
+                      descripción y ubicación. Sin precio de venta/costo por
+                      unidad ni código de barras (eso es propio de tienda). */}
                   {locations.length === 0 ? (
                     <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg">
-                      Todavía no tienes ninguna ubicación creada en Almacén → Mapa. Crea una primero para poder enviar productos ahí.
+                      Todavía no tienes ninguna ubicación creada en Almacén → Mapa. Crea una primero para poder registrar productos ahí.
                     </p>
                   ) : (
                     <div className="grid grid-cols-2 gap-3">
                       <div className="col-span-2">
-                        <label className="text-xs text-slate-400 mb-1 block">Ubicación *</label>
-                        <select value={newProd.whLocationId} onChange={e => setNewProd(p => ({ ...p, whLocationId: e.target.value }))}
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors">
-                          <option value="">Selecciona…</option>
-                          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                        </select>
+                        <label className="text-xs text-slate-400 mb-1 block">Nombre del producto *</label>
+                        <input type="text" value={newProd.name} onChange={e => setNewProd(p => ({ ...p, name: e.target.value }))} placeholder="Ej: Galleta de chocolate 100g"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-400 mb-1 block">Nombre del empaque *</label>
+                        <label className="text-xs text-slate-400 mb-1 block">Código <span className="text-slate-500 normal-case font-normal">(autogenerado, editable)</span></label>
+                        <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: 001"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Nombre de unidad por empaque *</label>
                         <input value={newProd.whPackName} onChange={e => setNewProd(p => ({ ...p, whPackName: e.target.value }))} placeholder="Ej: Caja"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
                       <div>
                         <label className="text-xs text-slate-400 mb-1 block">Unidades por empaque *</label>
                         <input type="number" min="1" value={newProd.whPackQty} onChange={e => setNewProd(p => ({ ...p, whPackQty: e.target.value }))} placeholder="Ej: 24"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Precio de cada empaque ({currencySymbol})</label>
+                        <input type="number" min="0" step="0.01" value={newProd.whUnitPrice} onChange={e => setNewProd(p => ({ ...p, whUnitPrice: e.target.value }))} placeholder="0.00"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Cantidad de empaques *</label>
+                        <p className="text-[10px] text-slate-500 mb-1">Stock inicial</p>
+                        <input type="number" min="1" value={newProd.whPackCount} onChange={e => setNewProd(p => ({ ...p, whPackCount: e.target.value }))} placeholder="Ej: 5"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
                       <div className="col-span-2">
-                        <label className="text-xs text-slate-400 mb-1 block">Cantidad inicial (empaques) *</label>
-                        <input type="number" min="1" value={newProd.whPackCount} onChange={e => setNewProd(p => ({ ...p, whPackCount: e.target.value }))} placeholder="Ej: 5"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
+                        <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
+                        <p className="text-[10px] text-slate-500 mb-1">Se muestra en Compra/Venta a Proveedor y en el comprobante</p>
+                        <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: Presentación de 500ml, vidrio retornable…" rows={2}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs text-slate-400 mb-1 block">Ubicación *</label>
+                        <select value={newProd.whLocationId} onChange={e => setNewProd(p => ({ ...p, whLocationId: e.target.value }))}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors">
+                          <option value="">Selecciona…</option>
+                          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
                       </div>
                     </div>
                   )}
-                </div>
+                </>
               )}
+
               {saveError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-3">{saveError}</p>}
               <div className="flex gap-3 mt-5">
                 <button onClick={() => setShowNewProd(false)} className="flex-1 py-2.5 border border-slate-600 text-slate-400 rounded-xl text-sm hover:border-slate-500 transition-colors">Cancelar</button>
-                <button onClick={handleAddProduct} disabled={!newProd.name || !newProd.sku || saving}
+                <button onClick={handleAddProduct}
+                  disabled={saving || !newProd.name || (newProd.destino === "inventario" ? !newProd.sku : locations.length === 0)}
                   className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-500 text-slate-900 font-bold rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
                   {saving && <Loader2 size={14} className="animate-spin" />}Guardar Producto
                 </button>

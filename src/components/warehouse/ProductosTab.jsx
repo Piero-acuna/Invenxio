@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // src/components/warehouse/ProductosTab.jsx
 // Pestaña "📦 Mis Productos" (catálogo propio del almacén). Aquí se EDITA lo
-// que ya existe (nombre, empaque, precio, stock) y se gestiona — pero ya NO
-// se crean productos nuevos desde acá: eso ahora vive solo en Inventario
-// (InventoryModule.jsx → "Nuevo Producto" → "También enviarlo a Almacén"),
-// para que el catálogo de tienda sea siempre la única fuente de verdad de
-// qué productos existen. El stock siempre se cuenta en EMPAQUES completos
-// (cajas), nunca en unidades sueltas. Extraído de WarehouseModule.jsx al
-// separar el monolito.
+// que ya existe (nombre, empaque, precio, stock) y se gestiona. Los
+// productos NUEVOS se crean desde Inventario → "Nuevo Producto" → destino
+// "📦 Almacén" — es un catálogo independiente del de tienda (Inventario),
+// con su propia numeración de código; elegir ese destino ya no crea también
+// un producto de Inventario. El stock siempre se cuenta en EMPAQUES
+// completos (cajas), nunca en unidades sueltas. Extraído de
+// WarehouseModule.jsx al separar el monolito.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import {
@@ -76,7 +76,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
       <div className="flex items-start gap-2 p-3 bg-sky-500/10 border border-sky-500/30 rounded-xl text-xs text-sky-300">
         <Info size={14} className="flex-shrink-0 mt-0.5" />
         <span>
-          Los productos nuevos se crean desde <strong>Inventario → Nuevo Producto → "También enviarlo a Almacén"</strong>, eligiendo a qué ubicación va. Acá puedes editar los que ya existen, agregarles más stock, o revisar dónde está guardado cada uno.
+          Los productos nuevos se crean desde <strong>Inventario → Nuevo Producto → destino "📦 Almacén"</strong>, eligiendo su ubicación. Acá puedes editar los que ya existen, agregarles más stock, o revisar dónde está guardado cada uno.
         </span>
       </div>
 
@@ -140,7 +140,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
       )}
 
       {filtered.length === 0 ? (
-        <EmptyState icon={<Boxes size={28}/>} msg={warehouseProducts.length === 0 ? "Aún no hay productos enviados al almacén." : "Sin resultados para tu búsqueda."} sub={warehouseProducts.length === 0 ? "Créalos desde Inventario → Nuevo Producto → \"También enviarlo a Almacén\"." : ""} />
+        <EmptyState icon={<Boxes size={28}/>} msg={warehouseProducts.length === 0 ? "Aún no hay productos en el almacén." : "Sin resultados para tu búsqueda."} sub={warehouseProducts.length === 0 ? "Créalos desde Inventario → Nuevo Producto → destino \"📦 Almacén\"." : ""} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map(p => {
