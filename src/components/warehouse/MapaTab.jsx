@@ -222,8 +222,14 @@ export default function MapaTab({ locations, stockByLocation, stockByProduct, wa
                               </div>
                               {unitPrice > 0 && (
                                 <div className="flex items-center justify-between text-[11px]">
-                                  <span className="text-emerald-400/80">{formatMoney(unitPrice, currencySymbol)} / und</span>
-                                  <span className="text-slate-600">Total: {formatMoney(unitPrice * totalUnits, currencySymbol)}</span>
+                                  {/* unitPrice = precio de cada EMPAQUE (ver DashboardModule.jsx,
+                                      InventoryModule.jsx y ProductosTab.jsx — se guarda y se usa en
+                                      toda la app como precio por empaque, no por unidad suelta).
+                                      El total es precio × cantidad de EMPAQUES (item.qty), no ×
+                                      unidades individuales — antes se multiplicaba por totalUnits
+                                      y el total salía inflado. */}
+                                  <span className="text-emerald-400/80">{formatMoney(unitPrice, currencySymbol)} / {packName}</span>
+                                  <span className="text-slate-600">Total: {formatMoney(unitPrice * item.qty, currencySymbol)}</span>
                                 </div>
                               )}
                             </div>
