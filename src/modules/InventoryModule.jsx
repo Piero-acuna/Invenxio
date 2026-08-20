@@ -42,7 +42,7 @@ import { calcProfit, calcMarginPercent } from "../utils/finance";
 // ══════════════════════════════════════════════════════════════════════════════
 const InventoryModule = ({
   companyId, userName, canCreate, canEdit, canDelete, canViewFinance, canManageWarehouse,
-  products, loadingProducts: loadingP, suppliers, locations = [], warehouseProducts = [],
+  products, loadingProducts: loadingP, locations = [], warehouseProducts = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
