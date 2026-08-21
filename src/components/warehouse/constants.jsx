@@ -2,6 +2,9 @@
 // src/components/warehouse/constants.js
 // Constantes compartidas entre las pestañas del módulo de Almacén.
 // ─────────────────────────────────────────────────────────────────────────────
+/* eslint-disable react-refresh/only-export-components -- este archivo solo
+   exporta constantes (con JSX de íconos), no componentes; Fast Refresh no
+   aplica aquí y no hay nada que dividir. */
 import { ArrowUpCircle, ArrowDownCircle, MoveRight, Send } from "lucide-react";
 
 export const LOCATION_TYPES = ["Zona", "Estante", "Pasillo", "Refrigerador", "Bodega", "Otro"];

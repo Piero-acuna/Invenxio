@@ -8,7 +8,7 @@
 // las 4 vistas (lista, venta, compra, detalle, formulario) son componentes
 // de presentación bajo src/components/suppliers/ que solo reciben props.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Plus } from "lucide-react";
 import {
   addSupplier, updateSupplier, deleteSupplier,

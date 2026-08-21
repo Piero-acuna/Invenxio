@@ -111,14 +111,14 @@ function BarcodeScanner({ onDetected, onClose }) {
             },
           },
           videoRef.current,
-          (result, err) => {
+          (result, _err) => {
             if (doneRef.current) return;
             if (result) {
               doneRef.current = true;
               cleanup();
               onDetected(result.getText());
             }
-            // err es normal cuando no hay código en el frame — ignorar
+            // _err es normal cuando no hay código en el frame — ignorar
           }
         );
       } catch (err) {

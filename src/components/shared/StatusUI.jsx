@@ -6,6 +6,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { CheckCircle, AlertTriangle, X, Clock, Star, Loader2 } from "lucide-react";
 
+// constante compartida entre pestañas de Almacén, no un componente; no
+// aplica dividir en otro archivo solo por esto.
+// eslint-disable-next-line react-refresh/only-export-components
 export const STOCK_STATUS = ["En Stock", "Stock Bajo", "Agotado"];
 
 const StatusBadge = ({ status }) => {

@@ -70,7 +70,6 @@ export function generateInvoicePDF({
 }) {
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
   const pageW = 210;
-  const pageH = 297;
   const marginX = 18;
   const contentW = pageW - marginX * 2; // 174
   const rightX = marginX + contentW;    // 192

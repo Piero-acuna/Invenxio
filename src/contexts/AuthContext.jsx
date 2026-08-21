@@ -90,7 +90,7 @@ export function AuthProvider({ children }) {
     await supabase.auth.updateUser({ data }).catch(() => {});
   }
 
-  async function loadProfile(user, attempt = 0) {
+  const loadProfile = useCallback(async function loadProfile(user, attempt = 0) {
     try {
       let profile = await getUserProfile(user.uid);
 
@@ -174,7 +174,10 @@ export function AuthProvider({ children }) {
       setAuthError("Error al leer tu perfil: revisa que las políticas RLS publicadas coincidan con el esquema de la app.");
       await supabase.auth.signOut().catch(() => {});
     }
-  }
+  }, []); // sin dependencias: solo cierra sobre setters de estado (identidad
+  // estable) e imports del módulo, nunca sobre props/state — por eso es
+  // seguro fijar sus deps en [] y no rompe el patrón "correr una vez al
+  // montar" del useEffect que la usa más abajo.
 
   useEffect(() => {
     let mounted = true;
@@ -206,7 +209,7 @@ export function AuthProvider({ children }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [loadProfile]);
 
   async function login(email, password) {
     setAuthError("");
@@ -358,6 +361,10 @@ export function AuthProvider({ children }) {
   );
 }
 
+// useAuth vive junto a AuthProvider intencionalmente (patrón estándar de
+// Context + hook); separarlo en otro archivo solo para Fast Refresh
+// tocaría los 14 archivos que lo importan sin cambiar ningún comportamiento.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth debe usarse dentro de <AuthProvider>");

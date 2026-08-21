@@ -4,7 +4,7 @@
 // código de barras, emisión de comprobante PDF, e Historial general.
 // Extraído de InventorySystem.jsx al separar el monolito por módulos.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   Search, Plus, ShoppingCart, Package, AlertTriangle, CheckCircle,
   Minus, Trash2, Zap, Clock, BookOpen, Loader2, ScanBarcode,
@@ -50,9 +50,13 @@ const MovementsModule = ({
     (canPurchase || canSell) && { id: "history", label: "📋 Historial" },
   ].filter(Boolean);
   const [mvTab, setMvTab] = useState(innerTabs[0]?.id || "history");
-  useEffect(() => {
-    if (innerTabs.length && !innerTabs.some(t => t.id === mvTab)) setMvTab(innerTabs[0].id);
-  }, [canPurchase, canSell]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Si cambian los permisos (canPurchase/canSell) y la pestaña activa deja
+  // de existir, se ajusta durante el render en vez de en un efecto —así no
+  // se dispara un re-render adicional en cascada (patrón recomendado por
+  // React para "adjusting state based on props" en vez de useEffect).
+  if (innerTabs.length && !innerTabs.some(t => t.id === mvTab)) {
+    setMvTab(innerTabs[0].id);
+  }
 
   // ── SALE / POS ─────────────────────────────────────────────────────────────
   const [sSearch,      setSSearch]      = useState("");
@@ -120,6 +124,7 @@ const MovementsModule = ({
             partyName: clientName.trim() || "Cliente varios",
             items: cart.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
             total: cartTotal,
+            invoiceNumber,
             paymentMethod,
             currencySymbol,
           });

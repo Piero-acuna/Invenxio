@@ -2,7 +2,7 @@
 // src/services/firestore/companies.js — versión Supabase
 // Mismos exports que la versión Firestore original (ver firestoreService.js).
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabase, rowToCamel, paramsToSnake, assertNoError, subscribeToRow } from "./shared";
+import { supabase, rowToCamel, assertNoError, subscribeToRow } from "./shared";
 
 export const TRIAL_DAYS = 14; // informativo — el valor real vive en create_company() (SQL)
 
@@ -11,7 +11,7 @@ export const TRIAL_DAYS = 14; // informativo — el valor real vive en create_co
  * una sola función Postgres atómica (create_company). auth.uid() ya debe
  * estar autenticado (se llama justo después de supabase.auth.signUp()).
  */
-export async function createCompany({ companyName, ownerUid, ownerName, ownerEmail, country = "PE" }) {
+export async function createCompany({ companyName, ownerName, ownerEmail, country = "PE" }) {
   const { data, error } = await supabase.rpc("create_company", {
     p_company_name: companyName,
     p_country: country,
@@ -35,7 +35,7 @@ export async function getUserProfile(uid) {
  * el servidor (api/create-employee.js) porque Supabase, a diferencia de
  * Firebase, no permite crear la cuenta de otro usuario desde el cliente.
  */
-export async function createUserProfile({ uid, name, email, companyId, role = "empleado", permissions = {} }) {
+export async function createUserProfile({ name, email, companyId }) {
   const { error } = await supabase.rpc("join_company", {
     p_company_id: companyId,
     p_name: name,
