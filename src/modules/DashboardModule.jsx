@@ -10,16 +10,13 @@
 // empleado que no puede ver Almacén tampoco ve la sección de Almacén aquí,
 // y los montos en soles (S/) solo se muestran si tiene "ver_metricas_financieras".
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import {
   LayoutDashboard, Package, Warehouse, Truck, BarChart2, AlertTriangle,
   CheckCircle2, TrendingUp, TrendingDown, Clock, ArrowRight, Wallet,
   Boxes, Users, ShoppingCart, PackageX, Loader2, Trophy, ArrowDownCircle,
 } from "lucide-react";
 import { useDashboardTransactionsSummary } from "../hooks/useDashboardSummary";
-import {
-  subscribeToWarehouseProducts, subscribeToWarehouseStock, subscribeToLocations,
-} from "../services/firestoreService";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
 import { calcInventoryValue } from "../utils/finance";
@@ -28,6 +25,7 @@ export default function DashboardModule({
   companyId, userName, companyName, perms, onNavigate,
   products, loadingProducts: loadingProd, suppliers, loadingSuppliers: loadingSup,
   supplierSales, loadingSupplierSales: loadingSS,
+  locations = [], warehouseStock = [], warehouseProducts = [], loadingWarehouse: loadingWh,
 }) {
   // Símbolo de moneda de la empresa (S/ para Perú, $ para el resto — ver
   // countryConfig.js). `money` reemplaza al viejo `S/ ${...}` fijo.
@@ -52,22 +50,18 @@ export default function DashboardModule({
   // eso siguen usando useCollection normal.)
   const [txSummary, loadingTx] = useDashboardTransactionsSummary(companyId);
 
-  // ── Datos de Almacén — mismo patrón de suscripción directa que usan
-  //    WarehouseModule.jsx y SuppliersModule.jsx (no son colecciones con un
-  //    solo campo de orden fiable, así que no pasan por useCollection).
-  const [warehouseProducts, setWarehouseProducts] = useState([]);
-  const [warehouseStock,    setWarehouseStock]    = useState([]);
-  const [locations,         setLocations]         = useState([]);
-  const [loadingWh,         setLoadingWh]         = useState(true);
-  useEffect(() => {
-    if (!companyId || !perms.verAlmacen) { setLoadingWh(false); return; }
-    let done = 0;
-    const check = () => { if (++done >= 3) setLoadingWh(false); };
-    const u1 = subscribeToWarehouseProducts(companyId, d => { setWarehouseProducts(d); check(); });
-    const u2 = subscribeToWarehouseStock(companyId, d => { setWarehouseStock(d); check(); });
-    const u3 = subscribeToLocations(companyId, d => { setLocations(d); check(); });
-    return () => { u1(); u2(); u3(); };
-  }, [companyId, perms.verAlmacen]);
+  // "locations", "warehouseStock" y "warehouseProducts" YA NO se suscriben
+  // acá — llegan como prop desde InventorySystem.jsx (useWarehouseData),
+  // que ya las carga UNA sola vez y las comparte con WarehouseModule/
+  // SuppliersModule/MovementsModule. Antes el Dashboard abría su PROPIA
+  // suscripción independiente a esas 3 mismas tablas (subscribeToWarehouse-
+  // Products/Stock/Locations) — es decir, mientras el Dashboard estaba
+  // abierto había DOS juegos de canales de Realtime + dos descargas
+  // duplicadas de los mismos datos al mismo tiempo. Esto era la fuga de
+  // conexiones más concreta que encontramos en la auditoría: en el plan
+  // Free de Supabase el límite de conexiones de Realtime simultáneas es
+  // justo el tipo de recurso que este duplicado quemaba de más por cada
+  // pestaña con el Dashboard abierto.
 
   const stockByProduct = useMemo(() => {
     const map = {};
