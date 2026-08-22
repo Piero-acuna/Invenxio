@@ -2,6 +2,7 @@
 // src/services/firestore/supplierSales.js — versión Supabase
 // ─────────────────────────────────────────────────────────────────────────────
 import { supabase, assertNoError, paramsToSnake } from "./shared";
+import { getLocalDateTimeParams } from "../../utils/localDateTime";
 
 export async function sellWarehouseToSupplier(companyId, {
   warehouseProductId, warehouseProductName, sku, description,
@@ -10,6 +11,7 @@ export async function sellWarehouseToSupplier(companyId, {
   unitPricePerPack, supplierName,
   note, userName, status = "Entregado",
 }) {
+  const { clientDate, clientTime } = getLocalDateTimeParams();
   const { data, error } = await supabase.rpc("sell_warehouse_to_supplier", {
     p_company: companyId,
     p_warehouse_product_id: warehouseProductId,
@@ -26,6 +28,8 @@ export async function sellWarehouseToSupplier(companyId, {
     p_note: note || "",
     p_user_name: userName,
     p_status: status,
+    p_client_date: clientDate,
+    p_client_time: clientTime,
   });
   assertNoError(error, "sellWarehouseToSupplier");
   return data; // id de la venta
@@ -41,10 +45,13 @@ export async function updateSupplierSaleStatus(companyId, saleId, status) {
 }
 
 export async function cancelSupplierSale(companyId, sale, userName) {
+  const { clientDate, clientTime } = getLocalDateTimeParams();
   const { error } = await supabase.rpc("cancel_supplier_sale", {
     p_company: companyId,
     p_sale_id: sale.id,
     p_user_name: userName,
+    p_client_date: clientDate,
+    p_client_time: clientTime,
   });
   assertNoError(error, "cancelSupplierSale");
 }

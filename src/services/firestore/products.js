@@ -4,6 +4,7 @@
 // (ver supabase/migrations/0003_functions.sql) en vez de un runTransaction.
 // ─────────────────────────────────────────────────────────────────────────────
 import { supabase, paramsToSnake, assertNoError, rowsToCamel, uniqueChannelName } from "./shared";
+import { getLocalDateTimeParams } from "../../utils/localDateTime";
 
 export async function addProduct(companyId, product) {
   const payload = { ...paramsToSnake(product), company_id: companyId };
@@ -49,17 +50,23 @@ export function subscribeToProductHistory(companyId, productId, onData, maxEntri
   }
 
   fetchAll();
+  let debounceTimer = null;
+  const scheduleFetch = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(fetchAll, 300);
+  };
   const channel = supabase
     .channel(uniqueChannelName(`product_history:${productId}`))
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "product_history", filter: `product_id=eq.${productId}` },
-      fetchAll
+      scheduleFetch
     )
     .subscribe();
 
   return () => {
     cancelled = true;
+    if (debounceTimer) clearTimeout(debounceTimer);
     supabase.removeChannel(channel);
   };
 }
@@ -84,12 +91,14 @@ export async function cleanupZeroStockProductDuplicates(companyId, baseName) {
 
 /** Ajuste manual de stock — RPC atómica con row-lock (ver 0003_functions.sql). */
 export async function adjustProductStock(companyId, productId, { type, qty, user }) {
+  const { clientDate } = getLocalDateTimeParams();
   const { data, error } = await supabase.rpc("adjust_product_stock", {
     p_company: companyId,
     p_product_id: productId,
     p_type: type,
     p_qty: qty,
     p_user_name: user,
+    p_client_date: clientDate,
   });
   assertNoError(error, "adjustProductStock");
   return data; // nuevo stock

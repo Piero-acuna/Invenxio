@@ -8,6 +8,7 @@
 // pasos ocurren dentro de la MISMA transacción de Postgres.
 // ─────────────────────────────────────────────────────────────────────────────
 import { supabase, paramsToSnake, assertNoError, subscribeToCollection } from "./shared";
+import { getLocalDateTimeParams } from "../../utils/localDateTime";
 
 export function subscribeToLocations(companyId, onData) {
   return subscribeToCollection(companyId, "warehouse_locations", onData, "name");
@@ -109,6 +110,7 @@ export async function addWarehouseMovement(companyId, {
   reason, userName,
   packName, packQty, packPrice,
 }) {
+  const { clientDate, clientTime } = getLocalDateTimeParams();
   const { data, error } = await supabase.rpc("add_warehouse_movement", {
     p_company: companyId,
     p_type: type,
@@ -125,6 +127,8 @@ export async function addWarehouseMovement(companyId, {
     p_pack_name: packName || null,
     p_pack_qty: packQty || null,
     p_pack_price: packPrice || null,
+    p_client_date: clientDate,
+    p_client_time: clientTime,
   });
   assertNoError(error, "addWarehouseMovement");
   return data; // id del movimiento
@@ -138,6 +142,7 @@ export async function sendWarehouseToInventory(companyId, {
   storeProductId, storeProductName,
   reason, userName,
 }) {
+  const { clientDate, clientTime } = getLocalDateTimeParams();
   const { data, error } = await supabase.rpc("send_warehouse_to_inventory", {
     p_company: companyId,
     p_warehouse_product_id: warehouseProductId,
@@ -147,11 +152,16 @@ export async function sendWarehouseToInventory(companyId, {
     p_location_name: locationName,
     p_pack_count: packCount,
     p_pack_name: packName,
+    // p_unit_qty ya no se usa server-side (se recalcula ahí con el pack_qty
+    // real del producto — ver 0013_fix_dates_and_server_side_totals.sql) —
+    // se sigue mandando solo para no romper la firma de la RPC.
     p_unit_qty: unitQty,
     p_store_product_id: storeProductId,
     p_store_product_name: storeProductName,
     p_reason: reason || "",
     p_user_name: userName,
+    p_client_date: clientDate,
+    p_client_time: clientTime,
   });
   assertNoError(error, "sendWarehouseToInventory");
   return data; // id del movimiento

@@ -4,7 +4,7 @@
 // proveedores) con filtros, gráficos y exportación a Excel.
 // Extraído de InventorySystem.jsx al separar el monolito por módulos.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import {
   Search, ArrowUpCircle, ArrowDownCircle, BarChart2, TrendingUp,
   FileSpreadsheet, FileDown,
@@ -22,27 +22,6 @@ import { formatMoney } from "../utils/currency";
 import { calcGrossProfit, calcGlobalMarginPercent } from "../utils/finance";
 
 // ─── HISTORY TABLE ────────────────────────────────────────────────────────────
-// ── Tooltip personalizado del gráfico ─────────────────────────────────────
-// Fuera del componente (no dentro del render) para que Recharts no la
-// recree —y le resetee el estado— en cada render de TransactionHistory.
-const CustomTooltip = ({ active, payload, label, currencySymbol }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-3 shadow-2xl text-xs">
-      <p className="text-slate-400 font-medium mb-2">{label}</p>
-      {payload.map((entry, i) => (
-        <div key={i} className="flex items-center gap-2 mb-1">
-          <div className="w-2 h-2 rounded-full" style={{ background: entry.color }} />
-          <span className="text-slate-400">{entry.name}:</span>
-          <span className="font-bold font-mono" style={{ color: entry.color }}>
-            {entry.name === "Margen %" ? `${entry.value.toFixed(1)}%` : `${formatMoney(entry.value, currencySymbol)}`}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-};
-
 const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements = [], supplierSales = [], loading, canViewFinance, canPurchase, canSell, billing, companyId }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -177,7 +156,19 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
    * ingresos, egresos, ganancia y margen de cada balde. `periodsBack` decide
    * cuántos baldes se muestran (ej. últimos 14 días, últimas 8 semanas).
    */
-  const aggregateByPeriod = useCallback(function aggregateByPeriod(period, periodsBack) {
+  // Lunes de la semana que contiene `d` — d.getDay() da 0=domingo..6=sábado.
+  // OJO con domingo (getDay()===0): "- getDay() + 1" da +1 día (el lunes de
+  // la semana SIGUIENTE) en vez de -6 (el lunes de ESTA semana, la que
+  // termina ese domingo) — por eso el caso 0 se trata aparte.
+  const mondayOf = (d) => {
+    const day = d.getDay();
+    const diffToMonday = day === 0 ? 6 : day - 1;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - diffToMonday);
+    return monday;
+  };
+
+  function aggregateByPeriod(period, periodsBack) {
     const buckets = {};
     const now = new Date();
     const orderedKeys = [];
@@ -190,7 +181,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         label = bucketDate.toLocaleDateString("es-PE", { day: "2-digit", month: "short" });
       } else if (period === "weekly") {
         bucketDate = new Date(now); bucketDate.setDate(now.getDate() - i * 7);
-        bucketDate.setDate(bucketDate.getDate() - bucketDate.getDay() + 1); // lunes de esa semana
+        bucketDate = mondayOf(bucketDate);
         key = bucketDate.toISOString().slice(0, 10);
         label = `${bucketDate.getDate()}/${bucketDate.getMonth() + 1}`;
       } else {
@@ -210,9 +201,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       if (period === "daily") {
         key = d.toISOString().slice(0, 10);
       } else if (period === "weekly") {
-        const monday = new Date(d);
-        monday.setDate(d.getDate() - d.getDay() + 1);
-        key = monday.toISOString().slice(0, 10);
+        key = mondayOf(d).toISOString().slice(0, 10);
       } else {
         key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       }
@@ -226,11 +215,11 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       const ganancia = calcGrossProfit(b.ingresos, b.egresos);
       return { ...b, ganancia, margen: calcGlobalMarginPercent(b.ingresos, ganancia) };
     });
-  }, [chartHistory]);
+  }
 
-  const dailyData   = useMemo(() => aggregateByPeriod("daily",   14), [aggregateByPeriod]);
-  const weeklyData  = useMemo(() => aggregateByPeriod("weekly",   8), [aggregateByPeriod]);
-  const monthlyData = useMemo(() => aggregateByPeriod("monthly",  6), [aggregateByPeriod]);
+  const dailyData   = useMemo(() => aggregateByPeriod("daily",   14), [chartHistory]);
+  const weeklyData  = useMemo(() => aggregateByPeriod("weekly",   8), [chartHistory]);
+  const monthlyData = useMemo(() => aggregateByPeriod("monthly",  6), [chartHistory]);
 
   const chartData =
     chartPeriod === "daily"  ? dailyData :
@@ -325,6 +314,25 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       console.error("Error al generar comprobante:", err);
     }
   }
+
+  // ── Tooltip personalizado ─────────────────────────────────────────────────
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-3 shadow-2xl text-xs">
+        <p className="text-slate-400 font-medium mb-2">{label}</p>
+        {payload.map((entry, i) => (
+          <div key={i} className="flex items-center gap-2 mb-1">
+            <div className="w-2 h-2 rounded-full" style={{ background: entry.color }} />
+            <span className="text-slate-400">{entry.name}:</span>
+            <span className="font-bold font-mono" style={{ color: entry.color }}>
+              {entry.name === "Margen %" ? `${entry.value.toFixed(1)}%` : `${formatMoney(entry.value, currencySymbol)}`}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   if (loading) return <Spinner />;
 
@@ -429,7 +437,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                 <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false}
                   tickFormatter={v => `${currencySymbol}${v >= 1000 ? (v/1000).toFixed(1)+"k" : v}`} width={52} />
-                <Tooltip content={<CustomTooltip currencySymbol={currencySymbol} />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8", paddingTop: 12 }} />
                 <Bar dataKey="ingresos" name="Ingresos"  fill="#34d399" radius={[4,4,0,0]} />
                 <Bar dataKey="egresos"  name="Egresos"   fill="#60a5fa" radius={[4,4,0,0]} />
@@ -453,7 +461,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                 <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false}
                   tickFormatter={v => `${v.toFixed(0)}%`} width={40} />
-                <Tooltip content={<CustomTooltip currencySymbol={currencySymbol} />} cursor={{ stroke: "#fbbf24", strokeWidth: 1, strokeDasharray: "4 4" }} />
+                <Tooltip content={<CustomTooltip />} cursor={{ stroke: "#fbbf24", strokeWidth: 1, strokeDasharray: "4 4" }} />
                 <Area type="monotone" dataKey="margen" name="Margen %"
                   stroke="#fbbf24" strokeWidth={2.5} fill="url(#margenGrad)" dot={{ fill: "#fbbf24", r: 3, strokeWidth: 0 }} />
               </AreaChart>

@@ -19,13 +19,19 @@ export function subscribeToEmployees(companyId, onData) {
   }
 
   fetchAll();
+  let debounceTimer = null;
+  const scheduleFetch = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(fetchAll, 300);
+  };
   const channel = supabase
     .channel(uniqueChannelName(`users:${companyId}`))
-    .on("postgres_changes", { event: "*", schema: "public", table: "users", filter: `company_id=eq.${companyId}` }, fetchAll)
+    .on("postgres_changes", { event: "*", schema: "public", table: "users", filter: `company_id=eq.${companyId}` }, scheduleFetch)
     .subscribe();
 
   return () => {
     cancelled = true;
+    if (debounceTimer) clearTimeout(debounceTimer);
     supabase.removeChannel(channel);
   };
 }

@@ -16,7 +16,7 @@ import {
 } from "../services/firestoreService";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
-import { BarcodeDisplay, BarcodeScanner } from "../components/BarcodeUI";
+import { BarcodeDisplay } from "../components/BarcodeUI";
 import { generateBarcode } from "../lib/barcode";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
@@ -42,7 +42,7 @@ import { calcProfit, calcMarginPercent } from "../utils/finance";
 // ══════════════════════════════════════════════════════════════════════════════
 const InventoryModule = ({
   companyId, userName, canCreate, canEdit, canDelete, canViewFinance, canManageWarehouse,
-  products, loadingProducts: loadingP, locations = [], warehouseProducts = [],
+  products, loadingProducts: loadingP, suppliers, locations = [], warehouseProducts = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -106,16 +106,6 @@ const InventoryModule = ({
   const [editSaving,  setEditSaving]  = useState(false);
   const [editError,   setEditError]   = useState("");
 
-  // ── Escáner de código de barras al dar de alta/editar ────────────────
-  // "scannerTarget" indica a qué formulario aplicar el código leído:
-  // "new" → formulario de alta, "edit" → formulario de edición.
-  const [scannerTarget, setScannerTarget] = useState(null); // null | "new" | "edit"
-  const handleBarcodeScanned = (code) => {
-    if (scannerTarget === "new") setNewProd(p => ({ ...p, barcode: code }));
-    else if (scannerTarget === "edit") setEditForm(p => ({ ...p, barcode: code }));
-    setScannerTarget(null);
-  };
-
   // ── SKU / Código interno automático ──────────────────────────────────
   // Empieza en "001" y sube según cuántos productos hay. Se calcula a
   // partir del SKU numérico más alto que ya exista (no solo products.length)
@@ -173,7 +163,18 @@ const InventoryModule = ({
       }
 
       if (!sku) {
+        // BUG: antes los SKU autogenerados NUNCA se agregaban a
+        // `usedInBatch`, así que si una fila más abajo en el MISMO Excel
+        // traía un SKU explícito que coincidía con uno ya autogenerado acá
+        // (ej. autoSkuCounter llega a "005" y otra fila explícitamente
+        // puso SKU "005"), el choque no se detectaba — quedaban dos
+        // productos con el mismo SKU. Ahora se salta cualquier número ya
+        // usado (autogenerado o explícito) hasta encontrar uno libre.
         sku = String(autoSkuCounter).padStart(3, "0");
+        while (usedInBatch.has(sku.toLowerCase()) || existingSkus.has(sku.toLowerCase())) {
+          autoSkuCounter++;
+          sku = String(autoSkuCounter).padStart(3, "0");
+        }
         autoSkuCounter++;
       } else if (existingSkus.has(sku.toLowerCase()) || usedInBatch.has(sku.toLowerCase())) {
         return { ok: false, label, error: `El SKU "${sku}" ya existe (en tu inventario, o repetido en este mismo archivo).` };
@@ -717,29 +718,17 @@ const InventoryModule = ({
                     </div>
                   </div>
 
-                  {/* Código de barras — dos opciones: escanear el código
-                      propio del producto (fabricante) o generar uno nuevo
-                      si el producto no trae uno. */}
+                  {/* Código de barras */}
                   <div>
                     <label className="text-xs text-slate-400 uppercase tracking-wider mb-1 block flex items-center gap-1"><ScanBarcode size={11} />Código de Barras</label>
-                    <p className="text-[10px] text-slate-500 mb-1.5">Escanea el código que ya trae el producto, o genera uno propio si no tiene.</p>
                     <div className="flex gap-2">
                       <input value={newProd.barcode} onChange={e => setNewProd(p => ({ ...p, barcode: e.target.value }))} placeholder="Se genera automáticamente"
                         className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                      <button onClick={() => setScannerTarget("new")}
-                        className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5">
-                        <ScanBarcode size={13} /> Escanear
-                      </button>
                       <button onClick={() => setNewProd(p => ({ ...p, barcode: generateBarcode() }))}
                         className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap">
                         Generar
                       </button>
                     </div>
-                    {newProd.barcode && (
-                      <div className="mt-2">
-                        <BarcodeDisplay value={newProd.barcode} height={50} />
-                      </div>
-                    )}
                   </div>
                 </>
               ) : (
@@ -926,10 +915,6 @@ const InventoryModule = ({
                 <div className="flex gap-2">
                   <input value={editForm.barcode} onChange={e => setEditForm(p => ({ ...p, barcode: e.target.value }))}
                     className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono focus:outline-none focus:border-amber-500 transition-colors" />
-                  <button onClick={() => setScannerTarget("edit")}
-                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors flex items-center gap-1.5">
-                    <ScanBarcode size={13} /> Escanear
-                  </button>
                   <button onClick={() => setEditForm(p => ({ ...p, barcode: generateBarcode() }))}
                     className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors">
                     Generar
@@ -968,10 +953,6 @@ const InventoryModule = ({
         onImportRow={(values) => addProduct(companyId, values)}
         itemNoun="productos"
       />
-
-      {scannerTarget && (
-        <BarcodeScanner onDetected={handleBarcodeScanned} onClose={() => setScannerTarget(null)} />
-      )}
     </div>
   );
 };

@@ -1,32 +1,80 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/hooks/useWarehouseData.js
-// Suscribe en tiempo real a las 4 colecciones del módulo de Almacén y avisa
-// cuando las 4 primeras cargas ya llegaron (loading=false). Extraído de
-// WarehouseModule.jsx al separar el monolito por componentes.
+// src/hooks/useDashboardSummary.js
+//
+// Reemplaza, SOLO para el Dashboard, la vieja suscripción a la tabla
+// `transactions` COMPLETA (ver DashboardModule.jsx) por una llamada a la
+// función agregada dashboard_transactions_summary() — ver
+// supabase/migrations/0014_dashboard_summary_and_indexes.sql para el
+// porqué. El resto de la app (MovementsModule, SuppliersModule) sigue
+// usando useCollection normal sin tocar — esto es específico del
+// Dashboard, que es la pantalla que más tiempo suele quedar abierta.
+//
+// Se re-consulta (con el mismo debounce de 300ms que usa
+// subscribeToCollection, ver services/firestore/shared.js) cada vez que
+// cambia algo en `transactions` para esta empresa, para que el resumen
+// se mantenga al día en tiempo real igual que antes.
+//
+// Si la RPC falla por cualquier motivo, esto NUNCA tira la excepción hacia
+// arriba — no queremos que un error acá tumbe todo el Dashboard. Se
+// degrada mostrando el resumen en ceros/vacío y se loguea el error en
+// consola, para que el resto de la pantalla (Almacén, Proveedores,
+// Inventario) siga funcionando normal.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect } from "react";
-import {
-  subscribeToLocations, subscribeToWarehouseStock,
-  subscribeToWarehouseMovements, subscribeToWarehouseProducts,
-} from "../services/firestoreService";
+import { getDashboardTransactionsSummary } from "../services/firestore/transactions";
+import { supabase, uniqueChannelName } from "../services/firestore/shared";
 
-export function useWarehouseData(companyId) {
-  const [locations,         setLocations]         = useState([]);
-  const [stock,             setStock]             = useState([]);
-  const [movements,         setMovements]         = useState([]);
-  const [warehouseProducts, setWarehouseProducts] = useState([]);
-  const [loading,           setLoading]           = useState(true);
+const EMPTY_SUMMARY = {
+  salesToday: { count: 0, total: 0 },
+  purchasesToday: { count: 0, total: 0 },
+  recent: [],
+  topProductsAgg: [],
+};
+
+export function useDashboardTransactionsSummary(companyId) {
+  const [summary, setSummary] = useState(EMPTY_SUMMARY);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!companyId) return;
-    let done = 0;
-    const check = () => { if (++done >= 4) setLoading(false); };
-    const u1 = subscribeToLocations(companyId, d => { setLocations(d); check(); });
-    const u2 = subscribeToWarehouseStock(companyId, d => { setStock(d); check(); });
-    const u3 = subscribeToWarehouseMovements(companyId, d => { setMovements(d); check(); });
-    const u4 = subscribeToWarehouseProducts(companyId, d => { setWarehouseProducts(d); check(); });
-    return () => { u1(); u2(); u3(); u4(); };
+    if (!companyId) { setLoading(false); return; }
+    let cancelled = false;
+    setLoading(true);
+
+    async function fetchSummary() {
+      try {
+        const data = await getDashboardTransactionsSummary(companyId);
+        if (!cancelled) setSummary({ ...EMPTY_SUMMARY, ...data });
+      } catch (err) {
+        console.error("[useDashboardTransactionsSummary]", err);
+        if (!cancelled) setSummary(EMPTY_SUMMARY);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    fetchSummary();
+
+    let debounceTimer = null;
+    const scheduleFetch = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(fetchSummary, 300);
+    };
+
+    const channel = supabase
+      .channel(uniqueChannelName(`transactions_summary:${companyId}`))
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "transactions", filter: `company_id=eq.${companyId}` },
+        scheduleFetch
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, [companyId]);
 
-  return { locations, stock, movements, warehouseProducts, loading };
+  return [summary, loading];
 }

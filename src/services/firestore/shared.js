@@ -122,17 +122,33 @@ export function subscribeToCollection(companyId, table, onData, orderField = "cr
 
   fetchAll();
 
+  // BUG DE RENDIMIENTO QUE ESTO EVITA: `event: "*"` dispara un evento de
+  // Realtime POR CADA FILA que cambia — no uno por operación. Una venta con
+  // 5 productos en el carrito (record_sale) hace 5 INSERT en `transactions`
+  // en una sola llamada RPC, pero eso genera 5 eventos de Realtime casi
+  // simultáneos, y sin este debounce cada uno disparaba su PROPIA
+  // re-consulta completa de la tabla — 5 lecturas idénticas donde bastaba
+  // con 1. El debounce junta cualquier ráfaga de eventos que llegue dentro
+  // de esta ventana en una sola re-consulta al final.
+  const DEBOUNCE_MS = 300;
+  let debounceTimer = null;
+  const scheduleFetch = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(fetchAll, DEBOUNCE_MS);
+  };
+
   const channel = supabase
     .channel(uniqueChannelName(`${tableName}:${companyId}`))
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: tableName, filter: `company_id=eq.${companyId}` },
-      () => fetchAll()
+      scheduleFetch
     )
     .subscribe();
 
   return () => {
     cancelled = true;
+    if (debounceTimer) clearTimeout(debounceTimer);
     supabase.removeChannel(channel);
   };
 }
@@ -159,17 +175,24 @@ export function subscribeToRow(table, matchColumn, matchValue, onData) {
 
   fetchOne();
 
+  let debounceTimer = null;
+  const scheduleFetch = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(fetchOne, 300);
+  };
+
   const channel = supabase
     .channel(uniqueChannelName(`${table}:${matchColumn}:${matchValue}`))
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table, filter: `${matchColumn}=eq.${matchValue}` },
-      () => fetchOne()
+      scheduleFetch
     )
     .subscribe();
 
   return () => {
     cancelled = true;
+    if (debounceTimer) clearTimeout(debounceTimer);
     supabase.removeChannel(channel);
   };
 }

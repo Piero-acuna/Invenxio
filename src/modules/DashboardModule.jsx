@@ -16,15 +16,13 @@ import {
   CheckCircle2, TrendingUp, TrendingDown, Clock, ArrowRight, Wallet,
   Boxes, Users, ShoppingCart, PackageX, Loader2, Trophy, ArrowDownCircle,
 } from "lucide-react";
-import { useCollection } from "../hooks/useCollection";
+import { useDashboardTransactionsSummary } from "../hooks/useDashboardSummary";
 import {
   subscribeToWarehouseProducts, subscribeToWarehouseStock, subscribeToLocations,
 } from "../services/firestoreService";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
-import { sumTotals, calcInventoryValue } from "../utils/finance";
-
-const todayStr = () => new Date().toISOString().split("T")[0];
+import { calcInventoryValue } from "../utils/finance";
 
 export default function DashboardModule({
   companyId, userName, companyName, perms, onNavigate,
@@ -41,12 +39,18 @@ export default function DashboardModule({
   // y los comparte con Inventario/Movimientos/Proveedores también (antes
   // cada módulo abría su propia suscripción independiente a los mismos
   // datos).
-  // "transactions" SIN límite a propósito: el ranking de "más y menos
-  // vendidos" de abajo (topProducts) es histórico completo, no solo
-  // reciente — capar esto le daría un ranking incorrecto. (Compárese con
-  // MovementsModule.jsx, que sí capa su propia copia de "transactions"
-  // porque ahí solo alimenta un gráfico de periodo reciente.)
-  const [transactions, loadingTx]   = useCollection(companyId, "transactions", "createdAt");
+  // "transactions" ya NO se descarga completa acá — antes esto bajaba la
+  // tabla ENTERA de la empresa (creciente sin límite) solo para sacar 3
+  // cositas chicas: ventas/compras de hoy, los últimos 5 movimientos, y un
+  // ranking agregado por producto. Ahora esas 3 cosas las calcula la base
+  // de datos directamente (ver dashboard_transactions_summary() en
+  // 0014_dashboard_summary_and_indexes.sql) y acá solo llega el resultado
+  // ya resumido — mucho menos que bajar el historial completo, y no crece
+  // con el tiempo aunque la empresa acumule miles de ventas. (Compárese
+  // con MovementsModule.jsx / SuppliersModule.jsx, que sí necesitan las
+  // FILAS individuales de transactions para sus propias pantallas, y por
+  // eso siguen usando useCollection normal.)
+  const [txSummary, loadingTx] = useDashboardTransactionsSummary(companyId);
 
   // ── Datos de Almacén — mismo patrón de suscripción directa que usan
   //    WarehouseModule.jsx y SuppliersModule.jsx (no son colecciones con un
@@ -100,35 +104,27 @@ export default function DashboardModule({
   // alguna venta, y nunca repite un producto que ya salió en "más vendidos"
   // (importante en catálogos chicos, donde ambos rankings podrían pisarse).
   const topProducts = useMemo(() => {
-    const bySku = {};
-    transactions.forEach(t => {
-      if (t.type !== "venta") return;
-      const key = t.sku || t.product;
-      if (!bySku[key]) bySku[key] = { name: t.product, qty: 0 };
-      bySku[key].qty += t.qty || 0;
-    });
-    const ranked = Object.values(bySku).sort((a, b) => b.qty - a.qty);
+    // Antes: transactions.forEach(...) sobre TODAS las filas del historial.
+    // Ahora: txSummary.topProductsAgg ya viene UN renglón por producto (con
+    // el qty ya sumado) desde dashboard_transactions_summary() — la misma
+    // lógica de ranking de siempre, solo que ordenando muchas menos filas.
+    const ranked = [...(txSummary.topProductsAgg || [])].sort((a, b) => b.qty - a.qty);
     const n = ranked.length;
     const mostList = ranked.slice(0, Math.min(7, n));
     const leastCount = Math.min(7, Math.max(0, n - mostList.length));
     // .reverse() para que el #1 de "menos vendidos" sea el que tiene menos unidades.
     const leastList = leastCount > 0 ? ranked.slice(n - leastCount).reverse() : [];
     return { mostList, leastList };
-  }, [transactions]);
+  }, [txSummary.topProductsAgg]);
 
   // ── Movimientos (ventas / compras de hoy) ───────────────────────────────────
-  const mv = useMemo(() => {
-    const today = todayStr();
-    const salesToday     = transactions.filter(t => t.type === "venta"  && t.date === today);
-    const purchasesToday = transactions.filter(t => t.type === "compra" && t.date === today);
-    return {
-      salesCount:     salesToday.length,
-      salesTotal:     sumTotals(salesToday),
-      purchasesCount: purchasesToday.length,
-      purchasesTotal: sumTotals(purchasesToday),
-      recent: transactions.filter(t => t.type === "venta" || t.type === "compra").slice(0, 5),
-    };
-  }, [transactions]);
+  const mv = useMemo(() => ({
+    salesCount:     txSummary.salesToday.count,
+    salesTotal:     txSummary.salesToday.total,
+    purchasesCount: txSummary.purchasesToday.count,
+    purchasesTotal: txSummary.purchasesToday.total,
+    recent: txSummary.recent,
+  }), [txSummary]);
 
   // ── Proveedores ──────────────────────────────────────────────────────────────
   const sup = useMemo(() => ({
