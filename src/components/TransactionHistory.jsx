@@ -22,7 +22,7 @@ import { formatMoney } from "../utils/currency";
 import { calcGrossProfit, calcGlobalMarginPercent } from "../utils/finance";
 
 // ─── HISTORY TABLE ────────────────────────────────────────────────────────────
-const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements = [], supplierSales = [], loading, canViewFinance, canPurchase, canSell, billing, companyId }) => {
+const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements = [], supplierSales = [], productAdjustments = [], loading, canViewFinance, canPurchase, canSell, billing, companyId }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
   const [search, setSearch] = useState("");
@@ -54,6 +54,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
   const TYPE_LABEL = {
     venta: "Venta", compra: "Compra", venta_proveedor: "Venta a Proveedor",
     entrada: "Entrada", salida: "Salida", traslado: "Traslado", envio_inventario: "Envío a Tienda",
+    ajuste_entrada: "Ajuste (+)", ajuste_salida: "Merma / Ajuste (-)",
   };
   const unifiedHistory = useMemo(() => {
     const items = [];
@@ -111,12 +112,41 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       });
     }
 
+    // BUG QUE ESTO CORRIGE: los ajustes MANUALES de stock de Inventario
+    // (botón "+/-" en la ficha de un producto, ej. mercadería dañada,
+    // vencida o perdida, o una corrección de conteo) se guardan en
+    // `product_history` — nunca aparecían acá, así que el Historial general
+    // (y "Total Egresos" más abajo) subestimaba las salidas reales de
+    // mercadería: solo contaba compras, nunca lo que se perdía después de
+    // comprado. `product_history` no guarda el nombre del producto (solo su
+    // id), así que MovementsModule.jsx ya lo resuelve contra `products`
+    // antes de pasarlo acá — y también calcula `amount` (qty × costo ACTUAL
+    // del producto; es una aproximación, no el costo histórico exacto de
+    // ese día, porque no se guarda por ajuste).
+    productAdjustments.forEach(h => {
+      const isLoss = h.action === "Ajuste -";
+      items.push({
+        id: `ph-${h.id}`,
+        source: "Inventario",
+        type: isLoss ? "ajuste_salida" : "ajuste_entrada",
+        date: h.date, time: "",
+        product: h.productName || "Producto eliminado", sku: h.sku || "", description: "", qty: h.qty, unit: "",
+        // Solo la MERMA (Ajuste -) se cuenta como egreso real de dinero —
+        // encontrar stock de más (Ajuste +) es una corrección de conteo,
+        // no un ingreso, así que no se le pone monto.
+        amount: isLoss ? h.amount : null,
+        party: h.userName || "—",
+        note: h.note || "",
+        raw: h,
+      });
+    });
+
     return items.sort((a, b) => {
       const ta = a.raw?.createdAt?.toDate ? a.raw.createdAt.toDate().getTime() : new Date(a.date || "1970-01-01").getTime();
       const tb = b.raw?.createdAt?.toDate ? b.raw.createdAt.toDate().getTime() : new Date(b.date || "1970-01-01").getTime();
       return tb - ta;
     });
-  }, [rawTransactions, warehouseMovements, supplierSales, canPurchase, canSell]);
+  }, [rawTransactions, warehouseMovements, supplierSales, productAdjustments, canPurchase, canSell]);
 
   // ── Datos para el gráfico de rentabilidad: por día, semana o mes ─────────
   // Se arma a partir de `unifiedHistory` (no solo de la colección
@@ -145,7 +175,10 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
   const chartHistory = useMemo(() => {
     if (chartSource === "all") return unifiedHistory;
     if (chartSource === "inventario") {
-      return unifiedHistory.filter(t => t.type === "venta" || t.type === "compra");
+      // "ajuste_salida" (merma / stock perdido-dañado) también es un
+      // egreso real de Inventario, igual que una compra — ver el bloque
+      // que arma `productAdjustments` más arriba.
+      return unifiedHistory.filter(t => t.type === "venta" || t.type === "compra" || t.type === "ajuste_salida");
     }
     // "proveedores" agrupa Almacén + Proveedores, tal como se ve en la UI ("Almacén / Proveedores")
     return unifiedHistory.filter(t => t.type === "compra" || t.type === "venta_proveedor" || t.source === "Almacén");
@@ -207,7 +240,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       }
       if (!buckets[key]) return; // fuera del rango mostrado
       if (t.type === "venta" || t.type === "venta_proveedor") buckets[key].ingresos += t.amount || 0;
-      if (t.type === "compra")                                buckets[key].egresos  += t.amount || 0;
+      if (t.type === "compra" || t.type === "ajuste_salida")  buckets[key].egresos  += t.amount || 0;
     });
 
     return orderedKeys.map(k => {
@@ -245,8 +278,14 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
   // `supplierSales`) quedaban afuera de "Total Ingresos", subestimándolo.
   // Cada evento de `unifiedHistory` ya aparece una sola vez (ver esa
   // construcción más arriba), así que esto no duplica nada.
+  // "Total Egresos" ahora también suma "ajuste_salida" (merma: stock dado
+  // de baja por dañado/vencido/perdido, o corrección de conteo a la baja —
+  // ver bloque de `productAdjustments` en unifiedHistory) — antes solo
+  // contaba compras, así que la mercadería que se perdía DESPUÉS de
+  // comprada no aparecía como egreso en ningún lado, e inflaba la
+  // "Ganancia Bruta" de más abajo.
   const totalCompras  = unifiedHistory
-    .filter(t => t.type === "compra")
+    .filter(t => t.type === "compra" || t.type === "ajuste_salida")
     .reduce((sum, t) => sum + (t.amount || 0), 0);
   const totalVentas   = unifiedHistory
     .filter(t => t.type === "venta" || t.type === "venta_proveedor")
@@ -354,7 +393,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
             {
               label: "Total Egresos",
               value: `${formatMoney(totalCompras, currencySymbol)}`,
-              sub: `${unifiedHistory.filter(t=>t.type==="compra").length} compras`,
+              sub: `${unifiedHistory.filter(t=>t.type==="compra").length} compras + ${unifiedHistory.filter(t=>t.type==="ajuste_salida").length} mermas`,
               color: "text-blue-400",
               bg: "bg-blue-500/10 border-blue-500/20",
               icon: <ArrowUpCircle size={16} />,
@@ -531,6 +570,8 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                     salida:            "bg-red-500/15 text-red-400 border-red-500/30",
                     traslado:          "bg-sky-500/15 text-sky-400 border-sky-500/30",
                     envio_inventario:  "bg-amber-500/15 text-amber-400 border-amber-500/30",
+                    ajuste_entrada:    "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+                    ajuste_salida:     "bg-red-500/15 text-red-400 border-red-500/30",
                   };
                   const canReprint = (t.type === "venta" || t.type === "compra" || t.type === "venta_proveedor") && t.amount != null && canViewFinance;
                   return (
@@ -555,8 +596,8 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-300">{t.qty}{t.unit ? <span className="text-slate-500 font-normal"> {t.unit}</span> : ""}</td>
                       {canViewFinance && (
-                        <td className={`py-2.5 px-3 text-right font-mono font-bold ${t.amount == null ? "text-slate-600" : t.type === "compra" ? "text-red-400" : "text-emerald-400"}`}>
-                          {t.amount != null ? `${t.type === "compra" ? "-" : "+"} ${formatMoney(t.amount, currencySymbol)}` : "—"}
+                        <td className={`py-2.5 px-3 text-right font-mono font-bold ${t.amount == null ? "text-slate-600" : (t.type === "compra" || t.type === "ajuste_salida") ? "text-red-400" : "text-emerald-400"}`}>
+                          {t.amount != null ? `${(t.type === "compra" || t.type === "ajuste_salida") ? "-" : "+"} ${formatMoney(t.amount, currencySymbol)}` : "—"}
                         </td>
                       )}
                       <td className="py-2.5 px-3 hidden md:table-cell text-slate-400">{t.party}</td>

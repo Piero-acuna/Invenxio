@@ -525,11 +525,21 @@ function BillingTab({ billing, onSave }) {
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [error,   setError]   = useState("");
+  // BUG QUE ESTO CORRIGE: antes el guard de abajo era solo `if (!saving)`,
+  // así que si `billing` se refrescaba desde afuera (ej. la suscripción de
+  // Realtime de la empresa disparando de nuevo, con los mismos valores de
+  // siempre pero un objeto nuevo) MIENTRAS el Dueño estaba a media edición
+  // sin haber apretado "Guardar" todavía (`saving` seguía en `false`), el
+  // formulario se pisaba con lo que hubiera en el servidor y se perdía lo
+  // que estaba escribiendo. `dirty` marca "hay cambios sin guardar" desde
+  // el primer tecleo hasta que se guarda con éxito — ahí sí es seguro
+  // sincronizar con lo que llega de afuera.
+  const [dirty,   setDirty]   = useState(false);
 
-  // Si llegan datos nuevos desde Firestore (o se cargan por primera vez),
-  // refrescamos el formulario solo si el usuario no tiene cambios sin guardar.
+  // Si llegan datos nuevos desde Supabase (o se cargan por primera vez),
+  // refrescamos el formulario solo si el Dueño no tiene cambios sin guardar.
   useEffect(() => {
-    if (!saving) {
+    if (!dirty) {
       setForm({
         razonSocial: billing?.razonSocial || "",
         ruc:         billing?.ruc         || "",
@@ -544,6 +554,7 @@ function BillingTab({ billing, onSave }) {
 
   function set(key, value) {
     setForm(f => ({ ...f, [key]: value }));
+    setDirty(true);
     setSaved(false);
   }
 
@@ -556,6 +567,7 @@ function BillingTab({ billing, onSave }) {
     setSaving(true);
     try {
       await onSave(form);
+      setDirty(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {

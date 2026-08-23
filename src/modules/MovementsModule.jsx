@@ -4,7 +4,7 @@
 // código de barras, emisión de comprobante PDF, e Historial general.
 // Extraído de InventorySystem.jsx al separar el monolito por módulos.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Search, Plus, ShoppingCart, Package, AlertTriangle, CheckCircle,
   Minus, Trash2, Zap, Clock, BookOpen, Loader2, ScanBarcode,
@@ -45,18 +45,42 @@ const MovementsModule = ({
   // sola copia entre los dos sin romper a uno de los dos.
   const [transactions, loadingT] = useCollection(companyId, "transactions", "createdAt", 500);
 
+  // BUG QUE ESTO CORRIGE: los ajustes MANUALES de stock (botón "+/-" en la
+  // ficha de un producto en Inventario — mercadería dañada/vencida/perdida,
+  // o una corrección de conteo) se guardan en `product_history`, no en
+  // `transactions` — así que nunca aparecían en "Historial general" ni se
+  // contaban en "Total Egresos" (ver TransactionHistory.jsx). `product_history`
+  // solo guarda `product_id` (no el nombre ni el costo del producto), así
+  // que acá se resuelve contra `products` (ya cargado arriba) antes de
+  // pasarlo al Historial.
+  const [productHistory, loadingPH] = useCollection(companyId, "productHistory", "createdAt", 500);
+  const productAdjustments = useMemo(() => {
+    const byId = {};
+    products.forEach(p => { byId[p.id] = p; });
+    return productHistory
+      .filter(h => h.action === "Ajuste +" || h.action === "Ajuste -")
+      .map(h => {
+        const prod = byId[h.productId];
+        return {
+          ...h,
+          productName: prod?.name || "Producto eliminado",
+          sku: prod?.sku || "",
+          // Costo ACTUAL del producto × cantidad — es una aproximación (no
+          // se guarda el costo histórico exacto de cada ajuste), pero es lo
+          // más cercano disponible para reflejar el valor de la merma.
+          amount: h.action === "Ajuste -" ? Number(h.qty || 0) * Number(prod?.cost || 0) : null,
+        };
+      });
+  }, [productHistory, products]);
+
   const innerTabs = [
     canSell     && { id: "sale",     label: "🛒 Registrar Venta" },
     (canPurchase || canSell) && { id: "history", label: "📋 Historial" },
   ].filter(Boolean);
   const [mvTab, setMvTab] = useState(innerTabs[0]?.id || "history");
-  // Si cambian los permisos (canPurchase/canSell) y la pestaña activa deja
-  // de existir, se ajusta durante el render en vez de en un efecto —así no
-  // se dispara un re-render adicional en cascada (patrón recomendado por
-  // React para "adjusting state based on props" en vez de useEffect).
-  if (innerTabs.length && !innerTabs.some(t => t.id === mvTab)) {
-    setMvTab(innerTabs[0].id);
-  }
+  useEffect(() => {
+    if (innerTabs.length && !innerTabs.some(t => t.id === mvTab)) setMvTab(innerTabs[0].id);
+  }, [canPurchase, canSell]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── SALE / POS ─────────────────────────────────────────────────────────────
   const [sSearch,      setSSearch]      = useState("");
@@ -64,6 +88,43 @@ const MovementsModule = ({
   const [sSaving,      setSSaving]      = useState(false);
   const [sSuccess,     setSSuccess]     = useState(false);
   const [clientName,   setClientName]   = useState("");
+
+  // BUG QUE ESTO CORRIGE: el carrito guarda una "foto" de cada producto al
+  // agregarlo (precio, nombre, stock). Si alguien cambia el precio de ese
+  // producto (otro empleado, otra pestaña) MIENTRAS sigue en el carrito de
+  // una venta que todavía no se cobra, el carrito se quedaba mostrando el
+  // precio VIEJO — el cobro real nunca corría riesgo (record_sale siempre
+  // recalcula el precio actual server-side, nunca confía en lo que manda
+  // el carrito), pero el cajero podía ver un total distinto al que
+  // finalmente se registraba. `products` es una prop en vivo (suscripción
+  // en tiempo real desde InventorySystem.jsx), así que acá se mantiene
+  // cada ítem del carrito sincronizado con los datos actuales mientras
+  // siga en él — y si un producto se agotó o se borró mientras tanto, se
+  // ajusta la cantidad o se lo saca del carrito en vez de dejarlo con
+  // datos que ya no existen.
+  useEffect(() => {
+    setCart(prev => {
+      let changed = false;
+      const next = prev
+        .filter(item => {
+          const stillExists = products.some(p => p.id === item.id);
+          if (!stillExists) changed = true;
+          return stillExists;
+        })
+        .map(item => {
+          const live = products.find(p => p.id === item.id);
+          const liveStock = live.stock || 0;
+          const cappedQty = Math.min(item.qty, liveStock);
+          if (live.price !== item.price || live.name !== item.name || live.description !== item.description || cappedQty !== item.qty) {
+            changed = true;
+            return { ...item, price: live.price, name: live.name, description: live.description, stock: liveStock, qty: cappedQty };
+          }
+          return item;
+        })
+        .filter(item => item.qty > 0);
+      return changed ? next : prev;
+    });
+  }, [products]);
   const [paymentMethod, setPaymentMethod] = useState("Efectivo");
   const [invoiceMsg,   setInvoiceMsg]   = useState("");
   const [saleError,    setSaleError]    = useState("");
@@ -124,7 +185,6 @@ const MovementsModule = ({
             partyName: clientName.trim() || "Cliente varios",
             items: cart.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
             total: cartTotal,
-            invoiceNumber,
             paymentMethod,
             currencySymbol,
           });
@@ -324,7 +384,7 @@ const MovementsModule = ({
             <BookOpen size={16} className="text-amber-400" />Historial General
             <span className="ml-auto text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full font-mono">Inventario · Almacén · Proveedores</span>
           </h3>
-          <TransactionHistory transactions={transactions} warehouseMovements={warehouseMovements} supplierSales={supplierSales} loading={loadingT} canViewFinance={canViewFinance} canPurchase={canPurchase} canSell={canSell} billing={billing} companyId={companyId} />
+          <TransactionHistory transactions={transactions} warehouseMovements={warehouseMovements} supplierSales={supplierSales} productAdjustments={productAdjustments} loading={loadingT || loadingPH} canViewFinance={canViewFinance} canPurchase={canPurchase} canSell={canSell} billing={billing} companyId={companyId} />
         </div>
       )}
 

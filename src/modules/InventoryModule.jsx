@@ -16,7 +16,7 @@ import {
 } from "../services/firestoreService";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
-import { BarcodeDisplay } from "../components/BarcodeUI";
+import { BarcodeDisplay, BarcodeScanner } from "../components/BarcodeUI";
 import { generateBarcode } from "../lib/barcode";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
@@ -81,6 +81,12 @@ const InventoryModule = ({
 
   // Nuevo producto
   const [showNewProd, setShowNewProd] = useState(false);
+  // Qué formulario abrió la cámara de escaneo: null (cerrada) | "new"
+  // (formulario Nuevo Producto) | "edit" (formulario Editar Producto) —
+  // mismo componente BarcodeScanner que ya usa MovementsModule.jsx para el
+  // punto de venta, reutilizado acá para escanear el código de barras real
+  // de un producto físico al darlo de alta o corregirlo.
+  const [scannerTarget, setScannerTarget] = useState(null);
   // "destino" reemplaza al viejo booleano sendToWarehouse: ahora Inventario
   // y Almacén son dos catálogos independientes, cada uno con su propia
   // numeración de código — elegir uno NO crea nada en el otro (antes,
@@ -239,6 +245,15 @@ const InventoryModule = ({
     setAdjusting(false);
   };
 
+  // Recibe el código detectado por la cámara (BarcodeScanner) y lo mete en
+  // el campo "barcode" del formulario que estaba abierto cuando se apretó
+  // "Escanear" — "new" (Nuevo Producto) o "edit" (Editar Producto).
+  const handleBarcodeScan = (code) => {
+    if (scannerTarget === "new") setNewProd(p => ({ ...p, barcode: code }));
+    else if (scannerTarget === "edit") setEditForm(p => ({ ...p, barcode: code }));
+    setScannerTarget(null);
+  };
+
   const handleAddProduct = async () => {
     if (!newProd.name) return;
     if (newProd.destino === "almacen") {
@@ -320,7 +335,18 @@ const InventoryModule = ({
 
       const finalStock = !isNaN(stock) ? stock : editProd.stock;
       const finalMinStock = !isNaN(minStock) ? minStock : editProd.minStock;
-      const finalStatus = finalStock === 0 ? "Agotado" : finalStock <= finalMinStock ? "Stock Bajo" : "En Stock";
+      // BUG QUE ESTO CORRIGE: antes "stock" se guardaba acá mismo, junto con
+      // el resto de los campos, en un simple UPDATE — un cambio de stock
+      // hecho desde Editar Producto no quedaba en ningún lado (ni quién lo
+      // hizo, ni cuándo, ni aparecía en el Historial general), a diferencia
+      // del botón dedicado "Ajustar stock +/-" que sí pasa por
+      // adjustProductStock() y deja rastro en product_history. Ahora: el
+      // resto de los campos se guarda acá como antes (con el status
+      // calculado sobre el stock TODAVÍA sin cambiar), y si el stock
+      // cambió, se aplica aparte más abajo con esa misma función auditada
+      // — así cualquier corrección de stock, venga de donde venga, siempre
+      // queda registrada igual.
+      const statusBeforeStockChange = editProd.stock === 0 ? "Agotado" : editProd.stock <= finalMinStock ? "Stock Bajo" : "En Stock";
 
       await updateProduct(companyId, editProd.id, {
         name: editForm.name,
@@ -328,12 +354,21 @@ const InventoryModule = ({
         description: editForm.description || "",
         price: !isNaN(price) ? price : editProd.price,
         cost: !isNaN(cost) ? cost : editProd.cost,
-        stock: finalStock,
         minStock: finalMinStock,
         packQty: editForm.packQty ? Number(editForm.packQty) : null,
         barcode: editForm.barcode || editProd.barcode || generateBarcode(),
-        status: finalStatus,
+        status: statusBeforeStockChange,
       });
+
+      const stockDelta = finalStock - editProd.stock;
+      if (stockDelta !== 0) {
+        await adjustProductStock(companyId, editProd.id, {
+          type: stockDelta > 0 ? "add" : "remove",
+          qty: Math.abs(stockDelta),
+          user: userName,
+        });
+      }
+
       setEditProd(null);
     } catch (err) {
       setEditError(logAndGetErrorMessage(err, "Error al editar producto:"));
@@ -724,6 +759,10 @@ const InventoryModule = ({
                     <div className="flex gap-2">
                       <input value={newProd.barcode} onChange={e => setNewProd(p => ({ ...p, barcode: e.target.value }))} placeholder="Se genera automáticamente"
                         className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      <button onClick={() => setScannerTarget("new")}
+                        className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap flex items-center gap-1">
+                        <ScanBarcode size={13} /> Escanear
+                      </button>
                       <button onClick={() => setNewProd(p => ({ ...p, barcode: generateBarcode() }))}
                         className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap">
                         Generar
@@ -915,6 +954,10 @@ const InventoryModule = ({
                 <div className="flex gap-2">
                   <input value={editForm.barcode} onChange={e => setEditForm(p => ({ ...p, barcode: e.target.value }))}
                     className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono focus:outline-none focus:border-amber-500 transition-colors" />
+                  <button onClick={() => setScannerTarget("edit")}
+                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors flex items-center gap-1">
+                    <ScanBarcode size={13} /> Escanear
+                  </button>
                   <button onClick={() => setEditForm(p => ({ ...p, barcode: generateBarcode() }))}
                     className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors">
                     Generar
@@ -953,6 +996,10 @@ const InventoryModule = ({
         onImportRow={(values) => addProduct(companyId, values)}
         itemNoun="productos"
       />
+
+      {scannerTarget && (
+        <BarcodeScanner onDetected={handleBarcodeScan} onClose={() => setScannerTarget(null)} />
+      )}
     </div>
   );
 };
