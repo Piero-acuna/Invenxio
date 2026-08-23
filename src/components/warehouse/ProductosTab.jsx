@@ -13,7 +13,7 @@ import { useState } from "react";
 import {
   X, Edit3, Trash2, Search, RefreshCw, CheckCircle, MapPin, Boxes, Plus, Info,
 } from "lucide-react";
-import { updateWarehouseProduct, deleteWarehouseProduct } from "../../services/firestoreService";
+import { updateWarehouseProduct, deleteWarehouseProduct, addWarehouseMovement } from "../../services/firestoreService";
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
@@ -31,6 +31,11 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
   const [error,    setError]    = useState("");
   const [search,   setSearch]   = useState("");
   const [stockFor, setStockFor] = useState(null); // producto para el que se abrió "Agregar Stock"
+  // Cambiar de ubicación (dentro del panel de Editar) — mueve TODO el stock
+  // de una ubicación a otra reutilizando el mismo mecanismo de "Traslado"
+  // que ya existe en Registrar Movimiento, así queda igual de auditado.
+  const [movingLocId, setMovingLocId] = useState(null); // locationId que se está moviendo, o null
+  const [moveTarget,  setMoveTarget]  = useState("");
 
   function setF(key, val) { setForm(f => ({ ...f, [key]: val })); }
 
@@ -61,10 +66,36 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
   }
 
   async function handleDelete(p) {
-    const hasStock = (stockByProduct[p.id] || []).some(s => s.qty > 0);
-    if (hasStock) { alert("No puedes eliminar un producto con stock registrado en alguna ubicación. Trasládalo o envíalo a la tienda primero."); return; }
-    if (!confirm(`¿Eliminar "${p.name}" del catálogo de almacén?`)) return;
+    const rows = stockByProduct[p.id] || [];
+    const totalQty = rows.reduce((sum, s) => sum + (s.qty || 0), 0);
+    if (totalQty > 0) {
+      const detalle = rows.filter(s => s.qty > 0).map(s => `${s.qty} en ${s.locationName || "ubicación desconocida"}`).join(", ");
+      const valorPerdido = p.unitPrice ? ` (valor aprox.: ${formatMoney(totalQty * p.unitPrice, currencySymbol)})` : "";
+      if (!confirm(`"${p.name}" todavía tiene stock: ${detalle}${valorPerdido}.\n\nSi lo eliminas, ese stock desaparece del sistema (no queda como venta ni movimiento). ¿Eliminar de todas formas?`)) return;
+    } else {
+      if (!confirm(`¿Eliminar "${p.name}" del catálogo de almacén?`)) return;
+    }
     try { await deleteWarehouseProduct(companyId, p.id); } catch (e) { alert(logAndGetErrorMessage(e, "Error al eliminar producto de almacén:", "No se pudo eliminar el producto.")); }
+  }
+
+  async function handleMoveLocation(p, stockRow) {
+    if (!moveTarget || moveTarget === stockRow.locationId) return;
+    const targetLoc = locations.find(l => l.id === moveTarget);
+    setSaving(true); setError("");
+    try {
+      await addWarehouseMovement(companyId, {
+        type: "traslado",
+        productId: p.id, productName: p.name, sku: p.sku,
+        qty: stockRow.qty,
+        fromLocationId: stockRow.locationId, fromLocationName: stockRow.locationName,
+        toLocationId: moveTarget, toLocationName: targetLoc?.name || "",
+        reason: "Cambio de ubicación (desde Mis Productos)",
+        userName,
+        packName: p.packName, packQty: p.packQty,
+      });
+      setMovingLocId(null); setMoveTarget("");
+    } catch (e) { setError(logAndGetErrorMessage(e, "Error al mover stock:", "No se pudo mover el stock.")); }
+    setSaving(false);
   }
 
   const filtered = warehouseProducts.filter(p =>
@@ -128,6 +159,38 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors resize-none"/>
             </div>
           </div>
+
+          {/* Ubicación del stock actual — cambiarla mueve TODO ese stock vía
+              un "Traslado" (mismo mecanismo de Registrar Movimiento). Un
+              producto puede tener stock en varias ubicaciones a la vez, así
+              que se lista una fila por cada una con stock > 0. */}
+          {(stockByProduct[editItem.id] || []).filter(s => s.qty > 0).length > 0 && (
+            <div className="pt-3 border-t border-slate-700 space-y-2">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Ubicación del stock actual</p>
+              {(stockByProduct[editItem.id] || []).filter(s => s.qty > 0).map(s => (
+                <div key={s.locationId} className="flex items-center gap-2 text-xs bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 flex-wrap">
+                  <MapPin size={12} className="text-slate-500 flex-shrink-0" />
+                  <span className="text-slate-300 flex-1 min-w-0">{s.locationName || "—"}: <span className="font-mono text-amber-400">{s.qty}</span> {editItem.packName}</span>
+                  {movingLocId === s.locationId ? (
+                    <>
+                      <select value={moveTarget} onChange={e => setMoveTarget(e.target.value)}
+                        className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-[11px] text-slate-200 focus:outline-none focus:border-amber-500">
+                        <option value="">Mover a…</option>
+                        {locations.filter(l => l.id !== s.locationId).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                      <button onClick={() => handleMoveLocation(editItem, s)} disabled={!moveTarget || saving}
+                        className="text-emerald-400 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed"><CheckCircle size={14}/></button>
+                      <button onClick={() => { setMovingLocId(null); setMoveTarget(""); }} className="text-slate-500 hover:text-slate-300"><X size={14}/></button>
+                    </>
+                  ) : (
+                    <button onClick={() => { setMovingLocId(s.locationId); setMoveTarget(""); }}
+                      className="text-sky-400 hover:text-sky-300 text-[11px] font-medium whitespace-nowrap">Cambiar</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button onClick={() => { setShowForm(false); setEditItem(null); }} className="flex-1 py-2 text-xs border border-slate-700 text-slate-400 rounded-lg hover:border-slate-600 transition-colors">Cancelar</button>
             <button onClick={handleSave} disabled={saving}

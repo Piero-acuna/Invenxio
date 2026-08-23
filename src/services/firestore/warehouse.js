@@ -82,8 +82,19 @@ export async function updateWarehouseProduct(companyId, productId, data) {
   assertNoError(error, "updateWarehouseProduct");
 }
 
+/**
+ * Borra un producto de almacén Y su stock en todas las ubicaciones, en un
+ * solo paso atómico — ver 0017_delete_warehouse_product_rpc.sql. Antes esto
+ * era un DELETE directo del cliente solo contra `warehouse_products`, que
+ * dejaba filas huérfanas en `warehouse_stock` (esa tabla exige el permiso
+ * 'eliminar_registros' para borrarse, distinto al 'gestionar_almacen' que
+ * ya alcanza para ver/editar el resto de "Mis Productos").
+ */
 export async function deleteWarehouseProduct(companyId, productId) {
-  const { error } = await supabase.from("warehouse_products").delete().eq("id", productId).eq("company_id", companyId);
+  const { error } = await supabase.rpc("delete_warehouse_product", {
+    p_company: companyId,
+    p_product_id: productId,
+  });
   assertNoError(error, "deleteWarehouseProduct");
 }
 
