@@ -31,7 +31,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { supabaseAdmin, verifyBearerToken } from "./_supabaseAdmin.js";
 
-const PLAN_AMOUNT_CENTS = 5799; // S/ 57.99 — debe coincidir con PLAN_AMOUNT_CENTS de PaywallScreen.jsx
+const PLAN_AMOUNT_CENTS = 6299; // S/ 62.99 — debe coincidir con PLAN_AMOUNT_CENTS de PaywallScreen.jsx
 const PLAN_DAYS = 30;
 
 export default async function handler(req, res) {
