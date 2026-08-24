@@ -11,8 +11,8 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import {
-  addProduct, updateProduct, deleteProduct, adjustProductStock,
-  subscribeToProductHistory, addWarehouseProduct, addWarehouseMovement,
+  addProduct, updateProduct, deleteProduct, adjustProductStock, recordPurchase,
+  subscribeToProductHistory, addWarehouseProduct, addWarehouseMovement, recordWarehousePurchase,
 } from "../services/firestoreService";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
@@ -34,6 +34,19 @@ const PRODUCT_IMPORT_HEADERS = [
 const PRODUCT_IMPORT_EXAMPLE = [
   { "SKU / Código": "001", "Nombre": "Coca Cola 500ml", "Descripción": "Bebida gaseosa", "Categoría": "Bebidas", "Precio de Venta": 3.5, "Costo": 2.2, "Stock Inicial": 48, "Stock Mínimo": 10, "Unidades por Empaque": 6, "Código de Barras": "" },
   { "SKU / Código": "", "Nombre": "Arroz Extra 1kg", "Descripción": "", "Categoría": "Abarrotes", "Precio de Venta": 5.9, "Costo": 4.3, "Stock Inicial": 30, "Stock Mínimo": 5, "Unidades por Empaque": "", "Código de Barras": "" },
+];
+
+// Plantilla para importar productos de ALMACÉN (independiente de la de
+// Inventario — ver PRODUCT_IMPORT_HEADERS de arriba). "Ubicación" debe
+// coincidir con el NOMBRE de una ubicación ya creada en Almacén → Mapa
+// (no se crean ubicaciones nuevas desde acá).
+const WAREHOUSE_IMPORT_HEADERS = [
+  "Nombre", "SKU / Código", "Nombre de Unidad de Empaque", "Unidades por Empaque",
+  "Precio de cada Empaque", "Cantidad de Empaques", "Descripción", "Ubicación",
+];
+const WAREHOUSE_IMPORT_EXAMPLE = [
+  { "Nombre": "Coca Cola 500ml", "SKU / Código": "", "Nombre de Unidad de Empaque": "Caja", "Unidades por Empaque": 24, "Precio de cada Empaque": 50, "Cantidad de Empaques": 5, "Descripción": "", "Ubicación": "Zona A" },
+  { "Nombre": "Arroz Extra 1kg", "SKU / Código": "", "Nombre de Unidad de Empaque": "Saco", "Unidades por Empaque": 12, "Precio de cada Empaque": 42, "Cantidad de Empaques": 3, "Descripción": "", "Ubicación": "Zona A" },
 ];
 import { calcProfit, calcMarginPercent } from "../utils/finance";
 
@@ -146,6 +159,7 @@ const InventoryModule = ({
 
   // ── Importar Excel ────────────────────────────────────────────────────
   const [showImport, setShowImport] = useState(false);
+  const [showImportWh, setShowImportWh] = useState(false);
 
   // Valida TODAS las filas leídas del Excel de una vez (no una por una),
   // porque necesita ver el conjunto completo para: continuar la numeración
@@ -203,10 +217,108 @@ const InventoryModule = ({
           price, cost, stock, minStock,
           packQty: packQty || null,
           barcode,
-          status: stock === 0 ? "Agotado" : stock <= minStock ? "Stock Bajo" : "En Stock",
         },
       };
     });
+  }
+
+  // Mismo ajuste que "Nuevo Producto" (ver handleAddProduct): el producto
+  // se crea con stock 0, y el stock del Excel se aplica aparte — como
+  // "Compra" auditada si trae costo (para que cuente como Egreso real en
+  // el Historial), o como "Ajuste +" si no trae costo.
+  async function importInventoryRow(values) {
+    const { stock, cost, ...rest } = values;
+    const newProductId = await addProduct(companyId, { ...rest, cost, stock: 0, status: "Agotado" });
+    if (stock > 0 && cost > 0) {
+      await recordPurchase(companyId, {
+        supplierId: "", supplierName: "",
+        productId: newProductId, productName: rest.name, sku: rest.sku,
+        description: rest.description,
+        qty: stock, unitCost: cost, total: stock * cost,
+        note: "Stock inicial (importado desde Excel)", userName,
+      });
+    } else if (stock > 0) {
+      await adjustProductStock(companyId, newProductId, { type: "add", qty: stock, user: userName });
+    }
+  }
+
+  // ── Importar Excel → Almacén (independiente del de Inventario) ─────────
+  // "Ubicación" tiene que coincidir con el NOMBRE de una ubicación ya
+  // creada en Almacén → Mapa — acá no se crean ubicaciones nuevas.
+  function parseWarehouseProductImportRows(rawRows) {
+    const existingSkus = new Set(warehouseProducts.map(p => (p.sku || "").trim().toLowerCase()).filter(Boolean));
+    let autoSkuCounter = parseInt(nextWhSku, 10);
+    const usedInBatch = new Set();
+    const locByName = {};
+    locations.forEach(l => { locByName[(l.name || "").trim().toLowerCase()] = l; });
+
+    return rawRows.map((raw) => {
+      const name = String(raw["Nombre"] ?? "").trim();
+      const label = name || "(sin nombre)";
+      let sku = String(raw["SKU / Código"] ?? "").trim();
+      const packName = String(raw["Nombre de Unidad de Empaque"] ?? "").trim() || "Caja";
+      const packQty = Number(raw["Unidades por Empaque"]);
+      const unitPrice = Number(raw["Precio de cada Empaque"]) || 0;
+      const packCount = Number(raw["Cantidad de Empaques"]) || 0;
+      const locationRaw = String(raw["Ubicación"] ?? "").trim();
+
+      if (!name) return { ok: false, label, error: "Falta el nombre del producto." };
+      if (!packQty || packQty <= 0) return { ok: false, label, error: 'La columna "Unidades por Empaque" es obligatoria y debe ser mayor a 0.' };
+      if (!locationRaw) return { ok: false, label, error: 'La columna "Ubicación" es obligatoria.' };
+      const loc = locByName[locationRaw.toLowerCase()];
+      if (!loc) return { ok: false, label, error: `No existe ninguna ubicación de almacén llamada "${locationRaw}". Créala primero en Almacén → Mapa.` };
+
+      if (!sku) {
+        sku = String(autoSkuCounter).padStart(3, "0");
+        while (usedInBatch.has(sku.toLowerCase()) || existingSkus.has(sku.toLowerCase())) {
+          autoSkuCounter++;
+          sku = String(autoSkuCounter).padStart(3, "0");
+        }
+        autoSkuCounter++;
+      } else if (existingSkus.has(sku.toLowerCase()) || usedInBatch.has(sku.toLowerCase())) {
+        return { ok: false, label, error: `El SKU "${sku}" ya existe en Almacén (o está repetido en este mismo archivo).` };
+      }
+      usedInBatch.add(sku.toLowerCase());
+
+      return {
+        ok: true,
+        label: `${name} (SKU ${sku})`,
+        values: {
+          name, sku, packName, packQty, unitPrice, packCount,
+          description: String(raw["Descripción"] ?? "").trim(),
+          locationId: loc.id, locationName: loc.name,
+        },
+      };
+    });
+  }
+
+  // Mismo criterio que Inventario: con costo → "Compra" auditada (cuenta
+  // como Egreso); sin costo → "Ajuste +" (entrada de stock sin monto).
+  async function importWarehouseRow(values) {
+    const { packCount, unitPrice, locationId, locationName, ...rest } = values;
+    const newProductId = await addWarehouseProduct(companyId, {
+      name: rest.name, sku: rest.sku, description: rest.description,
+      packName: rest.packName, packQty: rest.packQty, unitPrice: unitPrice || null,
+    });
+    if (packCount > 0 && unitPrice > 0) {
+      await recordWarehousePurchase(companyId, {
+        supplierId: "", supplierName: "",
+        warehouseProductId: newProductId, warehouseProductName: rest.name, sku: rest.sku,
+        description: rest.description,
+        locationId, locationName,
+        packCount, packName: rest.packName, packQty: rest.packQty,
+        unitCost: unitPrice, note: "Stock inicial (importado desde Excel)", userName,
+      });
+    } else if (packCount > 0) {
+      await addWarehouseMovement(companyId, {
+        type: "entrada",
+        productId: newProductId, productName: rest.name, sku: rest.sku,
+        qty: packCount,
+        toLocationId: locationId, toLocationName: locationName,
+        reason: "Stock inicial (importado desde Excel)", userName,
+        packName: rest.packName, packQty: rest.packQty,
+      });
+    }
   }
 
   const filtered = useMemo(() => products.filter(p => {
@@ -302,20 +414,44 @@ const InventoryModule = ({
       const packQty  = Number(newProd.packQty) || 0;
       const stock    = packQty > 0 ? (Number(newProd.stock) || 0) * packQty : (Number(newProd.stock) || 0);
       const minStock = Number(newProd.minStock) || 0;
+      const cost     = Number(newProd.cost) || 0;
       const sku = newProd.sku;
       const description = newProd.description || "";
-      await addProduct(companyId, {
+      // BUG QUE ESTO CORRIGE: antes el stock inicial se guardaba directo en
+      // el INSERT del producto — nunca generaba ninguna transacción, así
+      // que aunque tuviera un costo (ej. "compré 1 unidad a S/3 antes de
+      // tener el sistema"), ese costo NUNCA aparecía como "Egreso" en el
+      // Historial general (que solo cuenta compras REGISTRADAS, no lo que
+      // diga el campo "costo" de la ficha del producto). Ahora: el producto
+      // se crea SIEMPRE con stock 0, y si trae stock inicial se aplica
+      // aparte — como una "Compra" auditada (si tiene costo, para que sí
+      // cuente como egreso real) o como un "Ajuste +" (si no tiene costo,
+      // ej. una donación o un conteo inicial sin costo conocido).
+      const newProductId = await addProduct(companyId, {
         name: newProd.name,
         sku,
         description,
-        price:    Number(newProd.price) || 0,
-        cost:     Number(newProd.cost) || 0,
-        stock,
+        price: Number(newProd.price) || 0,
+        cost,
+        stock: 0,
         minStock,
-        packQty:  packQty || null,
-        barcode:  newProd.barcode || generateBarcode(),
-        status:   stock === 0 ? "Agotado" : stock <= minStock ? "Stock Bajo" : "En Stock",
+        packQty: packQty || null,
+        barcode: newProd.barcode || generateBarcode(),
+        status: "Agotado",
       });
+
+      if (stock > 0 && cost > 0) {
+        await recordPurchase(companyId, {
+          supplierId: "", supplierName: "",
+          productId: newProductId, productName: newProd.name, sku,
+          description,
+          qty: stock, unitCost: cost, total: stock * cost,
+          note: "Stock inicial al crear el producto", userName,
+        });
+      } else if (stock > 0) {
+        await adjustProductStock(companyId, newProductId, { type: "add", qty: stock, user: userName });
+      }
+
       setShowNewProd(false);
       setNewProd(p => ({ ...p, name: "", sku: nextSku, description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "" }));
     } catch (err) {
@@ -429,8 +565,14 @@ const InventoryModule = ({
           <>
             <button onClick={() => setShowImport(true)}
               className="flex items-center gap-2 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-sm rounded-lg transition-colors">
-              <FileSpreadsheet size={15} /> <span className="hidden sm:inline">Importar</span> Excel
+              <FileSpreadsheet size={15} /> <span className="hidden sm:inline">Importar</span> Inventario
             </button>
+            {canManageWarehouse && (
+              <button onClick={() => setShowImportWh(true)}
+                className="flex items-center gap-2 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-sm rounded-lg transition-colors">
+                <FileSpreadsheet size={15} /> <span className="hidden sm:inline">Importar</span> Almacén
+              </button>
+            )}
             <button onClick={() => { setShowNewProd(true); setSaveError(""); setNewProd(p => ({ ...p, destino: "inventario", sku: nextSku })); }}
               className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-sm rounded-lg transition-colors">
               <Plus size={15} /> Producto
@@ -988,14 +1130,28 @@ const InventoryModule = ({
       <ImportExcelModal
         open={showImport}
         onClose={() => setShowImport(false)}
-        title="Importar productos desde Excel"
+        title="Importar productos a Inventario desde Excel"
         templateFilename="Invenxio_Plantilla_Productos"
         templateHeaders={PRODUCT_IMPORT_HEADERS}
         templateExample={PRODUCT_IMPORT_EXAMPLE}
         parseRows={parseProductImportRows}
-        onImportRow={(values) => addProduct(companyId, values)}
+        onImportRow={importInventoryRow}
         itemNoun="productos"
       />
+
+      {canManageWarehouse && (
+        <ImportExcelModal
+          open={showImportWh}
+          onClose={() => setShowImportWh(false)}
+          title="Importar productos a Almacén desde Excel"
+          templateFilename="Invenxio_Plantilla_Almacen"
+          templateHeaders={WAREHOUSE_IMPORT_HEADERS}
+          templateExample={WAREHOUSE_IMPORT_EXAMPLE}
+          parseRows={parseWarehouseProductImportRows}
+          onImportRow={importWarehouseRow}
+          itemNoun="productos de almacén"
+        />
+      )}
 
       {scannerTarget && (
         <BarcodeScanner onDetected={handleBarcodeScan} onClose={() => setScannerTarget(null)} />

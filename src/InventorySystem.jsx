@@ -96,27 +96,18 @@ export default function InventoryApp() {
 
   const [activeTab, setActiveTab] = useState(visibleTabs[0]?.id || "inventory");
   // Si cambian los permisos (o el usuario) y la pestaña activa ya no está
-  // permitida, saltamos a la primera pestaña que sí puede ver — se ajusta
-  // durante el render (patrón recomendado por React) en vez de en un
-  // efecto, para no disparar un re-render adicional en cascada.
-  if (visibleTabs.length && !visibleTabs.some(t => t.id === activeTab)) {
-    setActiveTab(visibleTabs[0].id);
-  }
+  // permitida, saltamos a la primera pestaña que sí puede ver.
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.some(t => t.id === activeTab)) {
+      setActiveTab(visibleTabs[0].id);
+    }
+  }, [userProfile, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Equipo de la empresa (solo se carga si el usuario puede gestionarlo) ──
   const [employees,        setEmployees]        = useState([]);
   const [employeesLoading, setEmployeesLoading]  = useState(true);
   useEffect(() => {
-    // "companyId"/"canManage" pueden cambiar (ej: cambio de permisos) sin
-    // que haya una suscripción que llamar — se corta temprano, avisando
-    // que ya "cargó" (no hay nada que esperar). Es sincronización con un
-    // sistema externo (la suscripción de abajo), no estado derivado de
-    // props, así que no aplica moverlo al render.
-    if (!companyId || !canManage) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setEmployeesLoading(false);
-      return;
-    }
+    if (!companyId || !canManage) { setEmployeesLoading(false); return; }
     const unsub = subscribeToEmployees(companyId, (items) => {
       setEmployees(items);
       setEmployeesLoading(false);
@@ -320,7 +311,9 @@ export default function InventoryApp() {
                     perms={perms} onNavigate={setActiveTab}
                     products={products} loadingProducts={loadingProducts}
                     suppliers={suppliers} loadingSuppliers={loadingSuppliers}
-                    supplierSales={supplierSales} loadingSupplierSales={loadingSupplierSales} />
+                    supplierSales={supplierSales} loadingSupplierSales={loadingSupplierSales}
+                    locations={locations} warehouseStock={stock} warehouseProducts={warehouseProducts}
+                    loadingWarehouse={loadingWarehouse} />
                 )}
                 {activeTab === "inventory" && (
                   <InventoryModule companyId={companyId} userName={userName}
