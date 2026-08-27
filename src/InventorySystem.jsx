@@ -217,25 +217,39 @@ export default function InventoryApp() {
                 </div>
               </div>
               <RoleBadge role={userProfile?.role} />
-              <RolePanel
-                userProfile={userProfile}
-                companyName={companyName}
-                canManage={canManage}
-                employees={employees}
-                employeesLoading={employeesLoading}
-                onRegisterEmployee={handleRegisterEmployee}
-                onChangePermissions={handleChangePermissions}
-                onToggleActive={handleToggleActive}
-                billing={billing}
-                onSaveBilling={handleSaveBilling}
-                companyCurrency={companyCurrency}
-                onChangeCountry={handleChangeCountry}
-                subscription={subscription}
-                isBlocked={isBlocked}
-                trialDaysLeft={trialDaysLeft}
-                companyId={companyId}
-                getIdToken={() => currentUser.getIdToken()}
-              />
+              {/*
+                Bloqueo estricto de capa 1 (UI): si la suscripción está
+                inactiva (isBlocked), el panel NO se oculta con CSS ni se
+                deja "disabled" — se deja de renderizar por completo, así
+                que React lo desmonta del DOM. Esto elimina el "Registrar
+                Empleado" (EquipoTab) como vector: no existe ningún nodo
+                del árbol que un usuario pueda reabrir con devtools/estado
+                de React para volver a mostrarlo mientras isBlocked siga
+                en true. El pago (PaywallScreen) tiene su propio flujo de
+                cobro independiente del Panel, así que no se pierde ninguna
+                función necesaria durante el bloqueo.
+              */}
+              {!isBlocked && (
+                <RolePanel
+                  userProfile={userProfile}
+                  companyName={companyName}
+                  canManage={canManage}
+                  employees={employees}
+                  employeesLoading={employeesLoading}
+                  onRegisterEmployee={handleRegisterEmployee}
+                  onChangePermissions={handleChangePermissions}
+                  onToggleActive={handleToggleActive}
+                  billing={billing}
+                  onSaveBilling={handleSaveBilling}
+                  companyCurrency={companyCurrency}
+                  onChangeCountry={handleChangeCountry}
+                  subscription={subscription}
+                  isBlocked={isBlocked}
+                  trialDaysLeft={trialDaysLeft}
+                  companyId={companyId}
+                  getIdToken={() => currentUser.getIdToken()}
+                />
+              )}
             </div>
 
             {/* RIGHT: alertas + usuario + cerrar sesión */}

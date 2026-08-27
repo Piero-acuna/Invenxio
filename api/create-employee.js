@@ -50,6 +50,30 @@ export default async function handler(req, res) {
       return res.status(403).json({ ok: false, error: "Solo el Dueño de la empresa puede registrar empleados." });
     }
 
+    // ── Bloqueo estricto de capa 2 (servidor) ──────────────────────────────
+    // Este endpoint corre con la service_role key, que bypasea RLS por
+    // completo — ninguna policy de 0002_rls.sql se evalúa acá. Por eso el
+    // estado de la suscripción se valida A MANO, igual que el rol del que
+    // llama, ANTES de crear cualquier cuenta de Auth o fila en public.users.
+    // No importa si quien llama es el Dueño: si la empresa no tiene una
+    // suscripción activa (ni trial vigente ni plan pagado vigente), se
+    // rechaza con 403 sin excepciones — el frontend puede fallar o mostrar
+    // un botón que no debería existir, pero el servidor es la autoridad
+    // final de este control.
+    const { data: subscription, error: subErr } = await admin
+      .from("subscriptions")
+      .select("status, trial_ends_at, paid_until")
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (subErr) throw subErr;
+
+    const now = Date.now();
+    const trialActive = subscription?.status === "trial" && subscription.trial_ends_at && new Date(subscription.trial_ends_at).getTime() > now;
+    const planActive = subscription?.status === "active" && subscription.paid_until && new Date(subscription.paid_until).getTime() > now;
+    if (!trialActive && !planActive) {
+      return res.status(403).json({ ok: false, error: "No puedes registrar empleados hasta renovar tu suscripción." });
+    }
+
     // 1. Cuenta de Auth del empleado.
     const { data: created, error: createErr } = await admin.auth.admin.createUser({
       email,
