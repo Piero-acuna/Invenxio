@@ -36,12 +36,18 @@ export function subscribeToEmployees(companyId, onData) {
   };
 }
 
-export async function updateUserPermissions(uid, permissions) {
-  const { error } = await supabase.from("users").update({ permissions }).eq("id", uid);
+export async function updateUserPermissions(companyId, uid, permissions) {
+  // Defensa en profundidad: aunque RLS (users_update → is_owner(company_id)
+  // de la FILA real) ya impide que un Dueño de la Empresa A toque el perfil
+  // de un empleado de la Empresa B, se agrega el mismo filtro explícito que
+  // ya usan products.js/suppliers.js/warehouse.js, por consistencia y para
+  // que un intento así falle con 0 filas afectadas de forma clara, en vez
+  // de depender únicamente de la policy.
+  const { error } = await supabase.from("users").update({ permissions }).eq("id", uid).eq("company_id", companyId);
   assertNoError(error, "updateUserPermissions");
 }
 
-export async function setEmployeeActive(uid, active) {
-  const { error } = await supabase.from("users").update({ active }).eq("id", uid);
+export async function setEmployeeActive(companyId, uid, active) {
+  const { error } = await supabase.from("users").update({ active }).eq("id", uid).eq("company_id", companyId);
   assertNoError(error, "setEmployeeActive");
 }

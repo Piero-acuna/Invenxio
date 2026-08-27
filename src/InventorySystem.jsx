@@ -119,10 +119,10 @@ export default function InventoryApp() {
     await registerEmployee(email, password, name, permissions);
   }
   async function handleChangePermissions(uid, permissions) {
-    await updateUserPermissions(uid, permissions);
+    await updateUserPermissions(companyId, uid, permissions);
   }
   async function handleToggleActive(uid, active) {
-    await setEmployeeActive(uid, active);
+    await setEmployeeActive(companyId, uid, active);
   }
 
   // ── Datos de Facturación de la empresa (Razón Social, RUC, etc.) ──────────
