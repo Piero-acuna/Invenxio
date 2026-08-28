@@ -3,7 +3,7 @@
 // El ajuste de stock (adjustProductStock) ahora es una función RPC atómica
 // (ver supabase/migrations/0003_functions.sql) en vez de un runTransaction.
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabase, paramsToSnake, assertNoError, rowsToCamel, uniqueChannelName } from "./shared";
+import { supabase, paramsToSnake, assertNoError, rowsToCamel, uniqueChannelName, subscribeToChannel } from "./shared";
 import { getLocalDateTimeParams } from "../../utils/localDateTime";
 
 export async function addProduct(companyId, product) {
@@ -55,22 +55,24 @@ export function subscribeToProductHistory(companyId, productId, onData, maxEntri
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(fetchAll, 300);
   };
-  const channel = supabase
-    .channel(uniqueChannelName(`product_history:${productId}`))
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "product_history", filter: `product_id=eq.${productId}` },
-      scheduleFetch
-    )
-    .subscribe();
+  function buildChannel() {
+    return supabase
+      .channel(uniqueChannelName(`product_history:${productId}`))
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "product_history", filter: `product_id=eq.${productId}` },
+        scheduleFetch
+      )
+      .subscribe();
+  }
+  const unsubscribeChannel = subscribeToChannel({ buildChannel, refetch: fetchAll });
 
   return () => {
     cancelled = true;
     if (debounceTimer) clearTimeout(debounceTimer);
-    supabase.removeChannel(channel);
+    unsubscribeChannel();
   };
 }
-
 /**
  * Borra permanentemente las variantes de `baseName` (producto duplicado por
  * un costo de compra distinto — ver utils/productDuplicates.js) que se

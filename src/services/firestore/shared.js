@@ -71,6 +71,79 @@ export function assertNoError(error, context) {
 let channelSeq = 0;
 export const uniqueChannelName = (base) => `${base}:${Date.now()}:${channelSeq++}`;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Resiliencia ante bfcache (Back/Forward Cache)
+//
+// PROBLEMA: cuando el usuario navega hacia atrás/adelante, el navegador
+// puede congelar la página entera en memoria (bfcache) en vez de destruirla
+// — y para poder hacerlo, CIERRA el WebSocket de Supabase Realtime por su
+// cuenta (es una restricción del propio bfcache, no un bug nuestro: una
+// página con un socket abierto puede quedar excluida del bfcache a menos
+// que el socket se cierre al congelarla). El componente de React NO se
+// desmonta en este proceso — la página completa queda pausada tal cual
+// estaba — así que el cleanup normal de useEffect (el `return () => ...`
+// de cada subscribeTo*) NUNCA se dispara. El canal queda "vivo" en el
+// estado de JS pero con el socket ya muerto: el cliente deja de recibir
+// actualizaciones en tiempo real sin ningún aviso, y si el navegador lo
+// mata de forma abrupta en vez de un cierre limpio, Supabase puede tardar
+// en notar la desconexión del lado del servidor (la "conexión fantasma"
+// que se ve en el dashboard de Supabase).
+//
+// SOLUCIÓN: los eventos `pagehide`/`pageshow` del navegador SÍ se disparan
+// en el ciclo de vida del bfcache (a diferencia del unmount de React), y
+// `event.persisted === true` distingue "la página va/viene del bfcache" de
+// un cierre de pestaña real:
+//   • pagehide (persisted): se cierra el canal A PROPÓSITO, antes de que
+//     el navegador lo mate solo — así el servidor recibe un cierre limpio
+//     en vez de dejar una conexión fantasma.
+//   • pageshow (persisted): la página se restauró desde el bfcache con el
+//     canal ya cerrado — se crea uno NUEVO. Nunca hay duplicados porque
+//     (a) el viejo ya se removió explícitamente en pagehide, y (b)
+//     uniqueChannelName() igual garantiza un topic distinto por canal. Se
+//     dispara además un refetch inmediato, porque cualquier cambio
+//     ocurrido mientras la página estuvo congelada se perdió por completo
+//     (no había conexión para recibirlo).
+//
+// subscribeToChannel() envuelve ese ciclo para que cada suscripción del
+// proyecto lo tenga gratis, sin repetir esta lógica en cada archivo.
+// `buildChannel` crea y suscribe un canal nuevo (debe devolverlo ya
+// `.subscribe()`ado); `refetch` es la función que vuelve a pedir los datos
+// actuales cuando se restaura desde bfcache.
+export function subscribeToChannel({ buildChannel, refetch }) {
+  let channel = buildChannel();
+
+  function handlePageHide(event) {
+    if (event.persisted && channel) {
+      supabase.removeChannel(channel);
+      channel = null;
+    }
+  }
+
+  function handlePageShow(event) {
+    if (event.persisted) {
+      if (!channel) channel = buildChannel();
+      refetch();
+    }
+  }
+
+  window.addEventListener("pagehide", handlePageHide);
+  window.addEventListener("pageshow", handlePageShow);
+
+  // Limpieza real: se llama tanto en un unmount normal de React como desde
+  // pagehide cuando la página NO va al bfcache (persisted === false, ej.
+  // cierre de pestaña) — en ese caso el propio removeChannel de más abajo
+  // en cada subscribeTo*() ya se encarga; acá solo se retiran los
+  // listeners y se cierra el canal si seguía abierto.
+  return function cleanup() {
+    window.removeEventListener("pagehide", handlePageHide);
+    window.removeEventListener("pageshow", handlePageShow);
+    if (channel) {
+      supabase.removeChannel(channel);
+      channel = null;
+    }
+  };
+}
+
 // ── Timestamps: Postgres pone `now()` solo. Para nuevos inserts, dejamos que
 //    la columna default/trigger lo genere; NO mandamos created_at/updated_at
 //    en los payloads de insert/update (a diferencia de Firestore, donde
@@ -137,19 +210,22 @@ export function subscribeToCollection(companyId, table, onData, orderField = "cr
     debounceTimer = setTimeout(fetchAll, DEBOUNCE_MS);
   };
 
-  const channel = supabase
-    .channel(uniqueChannelName(`${tableName}:${companyId}`))
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: tableName, filter: `company_id=eq.${companyId}` },
-      scheduleFetch
-    )
-    .subscribe();
+  function buildChannel() {
+    return supabase
+      .channel(uniqueChannelName(`${tableName}:${companyId}`))
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: tableName, filter: `company_id=eq.${companyId}` },
+        scheduleFetch
+      )
+      .subscribe();
+  }
+  const unsubscribeChannel = subscribeToChannel({ buildChannel, refetch: fetchAll });
 
   return () => {
     cancelled = true;
     if (debounceTimer) clearTimeout(debounceTimer);
-    supabase.removeChannel(channel);
+    unsubscribeChannel();
   };
 }
 
@@ -181,18 +257,21 @@ export function subscribeToRow(table, matchColumn, matchValue, onData) {
     debounceTimer = setTimeout(fetchOne, 300);
   };
 
-  const channel = supabase
-    .channel(uniqueChannelName(`${table}:${matchColumn}:${matchValue}`))
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table, filter: `${matchColumn}=eq.${matchValue}` },
-      scheduleFetch
-    )
-    .subscribe();
+  function buildChannel() {
+    return supabase
+      .channel(uniqueChannelName(`${table}:${matchColumn}:${matchValue}`))
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table, filter: `${matchColumn}=eq.${matchValue}` },
+        scheduleFetch
+      )
+      .subscribe();
+  }
+  const unsubscribeChannel = subscribeToChannel({ buildChannel, refetch: fetchOne });
 
   return () => {
     cancelled = true;
     if (debounceTimer) clearTimeout(debounceTimer);
-    supabase.removeChannel(channel);
+    unsubscribeChannel();
   };
 }

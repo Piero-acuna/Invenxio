@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // src/services/firestore/employees.js — versión Supabase
 // ─────────────────────────────────────────────────────────────────────────────
-import { supabase, rowsToCamel, assertNoError, uniqueChannelName } from "./shared";
+import { supabase, rowsToCamel, assertNoError, uniqueChannelName, subscribeToChannel } from "./shared";
 
 export function subscribeToEmployees(companyId, onData) {
   let cancelled = false;
@@ -24,15 +24,21 @@ export function subscribeToEmployees(companyId, onData) {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(fetchAll, 300);
   };
-  const channel = supabase
-    .channel(uniqueChannelName(`users:${companyId}`))
-    .on("postgres_changes", { event: "*", schema: "public", table: "users", filter: `company_id=eq.${companyId}` }, scheduleFetch)
-    .subscribe();
+  function buildChannel() {
+    return supabase
+      .channel(uniqueChannelName(`users:${companyId}`))
+      .on("postgres_changes", { event: "*", schema: "public", table: "users", filter: `company_id=eq.${companyId}` }, scheduleFetch)
+      .subscribe();
+  }
+  // subscribeToChannel se encarga de cerrar el canal al entrar a bfcache
+  // (pagehide) y de recrearlo + refrescar los datos al volver (pageshow) —
+  // ver el comentario largo en shared.js para el porqué.
+  const unsubscribeChannel = subscribeToChannel({ buildChannel, refetch: fetchAll });
 
   return () => {
     cancelled = true;
     if (debounceTimer) clearTimeout(debounceTimer);
-    supabase.removeChannel(channel);
+    unsubscribeChannel();
   };
 }
 

@@ -22,7 +22,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect } from "react";
 import { getDashboardTransactionsSummary } from "../services/firestore/transactions";
-import { supabase, uniqueChannelName } from "../services/firestore/shared";
+import { supabase, uniqueChannelName, subscribeToChannel } from "../services/firestore/shared";
 
 const EMPTY_SUMMARY = {
   salesToday: { count: 0, total: 0 },
@@ -60,19 +60,26 @@ export function useDashboardTransactionsSummary(companyId) {
       debounceTimer = setTimeout(fetchSummary, 300);
     };
 
-    const channel = supabase
-      .channel(uniqueChannelName(`transactions_summary:${companyId}`))
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "transactions", filter: `company_id=eq.${companyId}` },
-        scheduleFetch
-      )
-      .subscribe();
+    function buildChannel() {
+      return supabase
+        .channel(uniqueChannelName(`transactions_summary:${companyId}`))
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "transactions", filter: `company_id=eq.${companyId}` },
+          scheduleFetch
+        )
+        .subscribe();
+    }
+    // Resiliencia ante bfcache: ver el comentario largo en shared.js. Sin
+    // esto, este era justo el hook que más tiempo pasa montado (el
+    // Dashboard suele quedar abierto en una pestaña), así que era el más
+    // expuesto a quedarse "ciego" en tiempo real tras un back/forward.
+    const unsubscribeChannel = subscribeToChannel({ buildChannel, refetch: fetchSummary });
 
     return () => {
       cancelled = true;
       if (debounceTimer) clearTimeout(debounceTimer);
-      supabase.removeChannel(channel);
+      unsubscribeChannel();
     };
   }, [companyId]);
 
