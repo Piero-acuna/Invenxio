@@ -187,12 +187,6 @@ export default function InventoryApp() {
   // para exactamente los mismos datos.
   const [products, loadingProducts]   = useCollection(companyId, "products",  "name");
   const [suppliers, loadingSuppliers] = useCollection(companyId, "suppliers", "name");
-  // Presentaciones (kits/packs/granel — ver 0019_kits_bulk_presentations.sql):
-  // mismo criterio de arriba, una sola suscripción compartida entre
-  // InventoryModule (administrar presentaciones de un producto) y
-  // MovementsModule (POS: elegir presentación al vender, escaneo de su
-  // barcode propio).
-  const [presentations, loadingPresentations] = useCollection(companyId, "productPresentations", "createdAt");
   // "supplierSales" compartido entre MovementsModule (Historial) y
   // SuppliersModule (Ventas a Proveedores) — misma tabla, mismo orden, sin
   // límite en ambos casos, así que una sola copia sirve para los dos.
@@ -341,16 +335,14 @@ export default function InventoryApp() {
                     canDelete={perms.eliminarRegistros} canViewFinance={perms.verMetricas}
                     canManageWarehouse={perms.gestionarAlmacen}
                     products={products} loadingProducts={loadingProducts}
-                    suppliers={suppliers} locations={locations} warehouseProducts={warehouseProducts}
-                    presentations={presentations} loadingPresentations={loadingPresentations} />
+                    suppliers={suppliers} locations={locations} warehouseProducts={warehouseProducts} />
                 )}
                 {activeTab === "movements" && (
                   <MovementsModule companyId={companyId} userName={userName}
                     canPurchase={perms.registrarCompras} canSell={perms.registrarVentas}
                     canViewFinance={perms.verMetricas} billing={billing}
                     products={products} loadingProducts={loadingProducts}
-                    warehouseMovements={movements} supplierSales={supplierSales}
-                    presentations={presentations} loadingPresentations={loadingPresentations} />
+                    warehouseMovements={movements} supplierSales={supplierSales} />
                 )}
                 {activeTab === "warehouse" && (
                   <WarehouseModuleWrapper companyId={companyId} userName={userName}

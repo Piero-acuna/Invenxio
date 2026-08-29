@@ -27,7 +27,6 @@
 //   ./firestore/products.js      → catálogo de productos de tienda + su historial
 //   ./firestore/suppliers.js     → catálogo de proveedores
 //   ./firestore/transactions.js  → registrar compras y ventas (log inmutable)
-//   ./firestore/presentations.js → CRUD de presentaciones (kits/packs/granel) de un producto
 //   ./firestore/supplierSales.js → ventas de almacén a proveedores + cancelación
 //   ./firestore/warehouse.js     → ubicaciones, stock, movimientos, catálogo de almacén
 //
@@ -78,16 +77,7 @@ export {
   recordPurchase,
   recordWarehousePurchase,
   recordSale,
-  recordSaleV2,
-  cancelSale,
-  recordPurchaseByPresentation,
 } from "./firestore/transactions";
-
-export {
-  addPresentation,
-  updatePresentation,
-  deletePresentation,
-} from "./firestore/presentations";
 
 export {
   addSupplierSale,
