@@ -9,13 +9,14 @@ import {
   Search, Plus, ShoppingCart, Package, AlertTriangle, CheckCircle,
   Minus, Trash2, Zap, Clock, BookOpen, Loader2, ScanBarcode,
 } from "lucide-react";
-import { recordSale, getNextInvoiceNumber } from "../services/firestoreService";
+import { recordSaleV2, getNextInvoiceNumber } from "../services/firestoreService";
 import { generateInvoicePDF } from "../utils/generateInvoicePDF";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner } from "../components/shared/StatusUI";
 import TransactionHistory from "../components/TransactionHistory";
 import { BarcodeScanner } from "../components/BarcodeUI";
+import PresentationPicker from "../components/pos/PresentationPicker";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
 
@@ -25,6 +26,7 @@ import { formatMoney } from "../utils/currency";
 const MovementsModule = ({
   companyId, userName, canPurchase, canSell, canViewFinance, billing,
   products, loadingProducts: loadingP, warehouseMovements, supplierSales,
+  presentations = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -89,79 +91,149 @@ const MovementsModule = ({
   const [sSuccess,     setSSuccess]     = useState(false);
   const [clientName,   setClientName]   = useState("");
 
-  // BUG QUE ESTO CORRIGE: el carrito guarda una "foto" de cada producto al
-  // agregarlo (precio, nombre, stock). Si alguien cambia el precio de ese
-  // producto (otro empleado, otra pestaña) MIENTRAS sigue en el carrito de
-  // una venta que todavía no se cobra, el carrito se quedaba mostrando el
-  // precio VIEJO — el cobro real nunca corría riesgo (record_sale siempre
-  // recalcula el precio actual server-side, nunca confía en lo que manda
-  // el carrito), pero el cajero podía ver un total distinto al que
-  // finalmente se registraba. `products` es una prop en vivo (suscripción
-  // en tiempo real desde InventorySystem.jsx), así que acá se mantiene
-  // cada ítem del carrito sincronizado con los datos actuales mientras
-  // siga en él — y si un producto se agotó o se borró mientras tanto, se
-  // ajusta la cantidad o se lo saca del carrito en vez de dejarlo con
-  // datos que ya no existen.
+  // BUG QUE ESTO CORRIGE: el carrito guarda una "foto" de cada línea al
+  // agregarla (precio y stock del producto/presentación). Si alguien
+  // cambia el precio de una presentación (otro empleado, otra pestaña)
+  // MIENTRAS sigue en el carrito de una venta que todavía no se cobra, el
+  // carrito se quedaba mostrando el precio VIEJO — el cobro real nunca
+  // corría riesgo (record_sale_v2 siempre relee el precio actual
+  // server-side, nunca confía en lo que manda el carrito), pero el cajero
+  // podía ver un total distinto al que finalmente se registraba. `products`
+  // y `presentations` son props en vivo (suscripción en tiempo real desde
+  // InventorySystem.jsx), así que acá se mantiene cada línea del carrito
+  // sincronizada con los datos actuales mientras siga en él.
   useEffect(() => {
-    setCart(prev => {
+    setCart((prev) => {
       let changed = false;
       const next = prev
-        .filter(item => {
-          const stillExists = products.some(p => p.id === item.id);
+        .filter((item) => {
+          const stillExists = products.some((p) => p.id === item.productId);
           if (!stillExists) changed = true;
           return stillExists;
         })
-        .map(item => {
-          const live = products.find(p => p.id === item.id);
+        .map((item) => {
+          const live = products.find((p) => p.id === item.productId);
+          const livePres = presentations.find((pr) => pr.id === item.presentationId);
           const liveStock = live.stock || 0;
-          const cappedQty = Math.min(item.qty, liveStock);
-          if (live.price !== item.price || live.name !== item.name || live.description !== item.description || cappedQty !== item.qty) {
-            changed = true;
-            return { ...item, price: live.price, name: live.name, description: live.description, stock: liveStock, qty: cappedQty };
+          const livePrice = livePres ? Number(livePres.price) || 0 : item.price;
+          let value = item.value;
+          // El tope de stock del lado del cliente es solo una guía visual
+          // (evita que el cajero arme un carrito obviamente imposible) —
+          // record_sale_v2 vuelve a validar el stock real, bloqueado,
+          // dentro de la misma transacción que descuenta.
+          if (item.mode === "qty" && item.unitType !== "peso") {
+            const maxUnits = Math.floor(liveStock / item.factor) || 0;
+            if (value > maxUnits) { value = maxUnits; changed = true; }
           }
-          return item;
+          if (liveStock !== item.stock || livePrice !== item.price || value !== item.value) changed = true;
+          return { ...item, stock: liveStock, price: livePrice, value };
         })
-        .filter(item => item.qty > 0);
+        .filter((item) => item.value > 0);
       return changed ? next : prev;
     });
-  }, [products]);
+  }, [products, presentations]);
   const [paymentMethod, setPaymentMethod] = useState("Efectivo");
   const [invoiceMsg,   setInvoiceMsg]   = useState("");
   const [saleError,    setSaleError]    = useState("");
   const [showScanner,  setShowScanner]  = useState(false);
   const [scanFeedback, setScanFeedback] = useState(""); // mensaje tras escanear
+  const [pickerProduct, setPickerProduct] = useState(null); // producto abierto en el selector de presentación
 
   const recentProducts = useMemo(() => products.filter(p => p.stock > 0).slice(0, 6), [products]);
   const sFiltered = sSearch ? products.filter(p =>
     (p.name?.toLowerCase().includes(sSearch.toLowerCase()) || p.barcode?.includes(sSearch) || p.sku?.toLowerCase().includes(sSearch.toLowerCase())) && p.stock > 0
   ) : [];
-  const cartTotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
+  const cartTotal = cart.reduce((s, i) => s + (i.mode === "amount" ? i.value : i.price * i.value), 0);
 
-  const addToCart = useCallback((product) => {
+  // Presentaciones vendibles (activas, no "solo compra") de un producto —
+  // ver 0019_kits_bulk_presentations.sql / PresentationsManager.jsx.
+  const getEligiblePresentations = useCallback(
+    (product) => presentations.filter((pr) => pr.productId === product.id && pr.active !== false && !pr.isPurchaseOnly),
+    [presentations]
+  );
+
+  const addToCart = useCallback((product, presentation, mode = "qty", value = 1) => {
     setSSearch("");
-    setCart(prev => {
-      const ex = prev.find(i => i.id === product.id);
-      return ex
-        ? prev.map(i => i.id === product.id ? { ...i, qty: Math.min(i.qty + 1, product.stock) } : i)
-        : [...prev, { ...product, qty: 1 }];
+    setCart((prev) => {
+      const cartId = `${presentation.id}:${mode}`;
+      const ex = prev.find((i) => i.cartId === cartId);
+      if (ex) {
+        return prev.map((i) => (i.cartId === cartId ? { ...i, value: i.value + value } : i));
+      }
+      return [
+        ...prev,
+        {
+          cartId,
+          presentationId: presentation.id,
+          productId: product.id,
+          productName: product.name,
+          presentationName: presentation.name,
+          unitType: product.unitType || "unidad",
+          factor: Number(presentation.factor) || 1,
+          price: Number(presentation.price) || 0,
+          mode,
+          value,
+          stock: product.stock || 0,
+        },
+      ];
     });
   }, []);
 
+  // Punto de entrada único al tocar/buscar un producto en el POS: si tiene
+  // una sola presentación y NO es a granel, se agrega directo (1 click = 1
+  // unidad, igual que antes — cero fricción extra para el caso simple). Si
+  // tiene varias presentaciones o es a granel (unit_type='peso'), siempre
+  // se abre el selector — nunca se asume una cantidad para algo que se
+  // vende por peso.
+  const handleProductClick = useCallback((product) => {
+    const opts = getEligiblePresentations(product);
+    if (opts.length === 0) {
+      setScanFeedback(`⚠️ "${product.name}" no tiene una presentación de venta configurada — agrégala desde Inventario.`);
+      setTimeout(() => setScanFeedback(""), 4000);
+      return;
+    }
+    if (product.unitType !== "peso" && opts.length === 1) {
+      addToCart(product, opts[0], "qty", 1);
+      return;
+    }
+    setPickerProduct(product);
+  }, [getEligiblePresentations, addToCart]);
+
   const handleBarcodeScan = useCallback((code) => {
     setShowScanner(false);
-    const found = products.find(p => p.barcode === code || p.sku === code);
+
+    // 1) ¿El código es el de una PRESENTACIÓN (el pack/caja suele traer su
+    //    propio EAN, distinto al de la unidad suelta)? Si es así, se agrega
+    //    ESA presentación exacta directo, sin pasar por el selector.
+    const presMatch = presentations.find((pr) => pr.barcode && pr.barcode === code);
+    if (presMatch) {
+      const product = products.find((p) => p.id === presMatch.productId);
+      if (!product) {
+        setScanFeedback(`❌ El producto de esta presentación ya no existe.`);
+      } else if (product.stock < presMatch.factor) {
+        setScanFeedback(`⚠️ "${product.name}" no tiene stock suficiente para "${presMatch.name}"`);
+      } else {
+        addToCart(product, presMatch, "qty", 1);
+        setScanFeedback(`✅ "${product.name}" (${presMatch.name}) agregado al carrito`);
+      }
+      setTimeout(() => setScanFeedback(""), 3500);
+      return;
+    }
+
+    // 2) Código del producto base (unidad suelta) — comportamiento de siempre.
+    const found = products.find((p) => p.barcode === code || p.sku === code);
     if (found) {
       if (found.stock <= 0) {
         setScanFeedback(`⚠️ "${found.name}" está agotado`);
       } else {
-        addToCart(found);
+        handleProductClick(found);
         setScanFeedback(`✅ "${found.name}" agregado al carrito`);
       }
     } else {
       setScanFeedback(`❌ No se encontró producto con código: ${code}`);
     }
     setTimeout(() => setScanFeedback(""), 3500);
-  }, [products, addToCart]);
+  }, [products, presentations, addToCart, handleProductClick]);
 
   const handleSale = async () => {
     if (cart.length === 0) return;
@@ -169,7 +241,10 @@ const MovementsModule = ({
     setInvoiceMsg("");
     setSaleError("");
     try {
-      await recordSale(companyId, { cartItems: cart, userName, clientName, paymentMethod });
+      const result = await recordSaleV2(companyId, {
+        cartItems: cart.map((i) => ({ presentationId: i.presentationId, mode: i.mode, value: i.value })),
+        userName, clientName, paymentMethod,
+      });
       setSSuccess(true);
 
       // ── Emitir comprobante de venta en PDF (sin terceros) ──
@@ -183,8 +258,20 @@ const MovementsModule = ({
             docType: "VENTA",
             partyLabel: "Cliente",
             partyName: clientName.trim() || "Cliente varios",
-            items: cart.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
-            total: cartTotal,
+            // Se arma con los valores REALES que devolvió record_sale_v2
+            // (result.items), no con la estimación del carrito en
+            // pantalla — así el comprobante siempre coincide con lo que
+            // quedó grabado (ej: el peso exacto en una venta por monto).
+            // result.items[i] corresponde 1-a-1 con cart[i]: la RPC
+            // procesa el carrito en el mismo orden en que se envía.
+            items: result.items.map((i, idx) => ({
+              name: `${cart[idx].productName} — ${i.presentationName}`,
+              description: "",
+              qty: i.qtyPresentation,
+              unitPrice: i.unitPrice,
+              total: i.lineTotal,
+            })),
+            total: result.total,
             paymentMethod,
             currencySymbol,
           });
@@ -196,9 +283,9 @@ const MovementsModule = ({
 
       setTimeout(() => { setSSuccess(false); setCart([]); setClientName(""); setPaymentMethod("Efectivo"); setInvoiceMsg(""); }, 3500);
     } catch (err) {
-      // recordSale ahora valida el stock real del servidor dentro de la
+      // record_sale_v2 valida el stock real del servidor dentro de la
       // transacción y lanza un Error con un mensaje legible cuando no
-      // alcanza el stock o el producto ya no existe — se lo mostramos
+      // alcanza el stock o la presentación ya no existe — se lo mostramos
       // directamente al cajero en vez de dejarlo solo en consola.
       setSaleError(logAndGetErrorMessage(err, "Error al registrar la venta:", "No se pudo registrar la venta. Intenta de nuevo."));
     }
@@ -248,7 +335,7 @@ const MovementsModule = ({
                 <div className="mt-3 space-y-2">
                   {sFiltered.length === 0 && <p className="text-slate-500 text-sm text-center py-4">Sin resultados</p>}
                   {sFiltered.slice(0, 6).map(p => (
-                    <button key={p.id} onClick={() => addToCart(p)}
+                    <button key={p.id} onClick={() => handleProductClick(p)}
                       className="w-full text-left p-3 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 hover:border-amber-500/40 rounded-xl transition-all flex items-center gap-3 group">
                       <div className="w-9 h-9 bg-slate-600 rounded-lg flex items-center justify-center flex-shrink-0"><Package size={15} className="text-slate-400" /></div>
                       <div className="flex-1 min-w-0">
@@ -272,7 +359,7 @@ const MovementsModule = ({
                   {loadingP ? <Spinner /> : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {recentProducts.map(p => (
-                        <button key={p.id} onClick={() => addToCart(p)}
+                        <button key={p.id} onClick={() => handleProductClick(p)}
                           className="p-3 bg-slate-700/40 hover:bg-slate-700 border border-slate-600/40 hover:border-amber-500/40 rounded-xl transition-all text-left group">
                           <div className="w-8 h-8 bg-slate-600 rounded-lg flex items-center justify-center mb-2">
                             <Package size={14} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
@@ -306,22 +393,36 @@ const MovementsModule = ({
                   <p className="text-xs text-center">Busca, toca o escanea productos</p>
                 </div>
               )}
-              {cart.map(item => (
-                <div key={item.id} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-slate-200 truncate">{item.name}</p>
-                    <p className="text-xs text-slate-500 font-mono">{formatMoney(item.price, currencySymbol)} c/u</p>
-                    {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
+              {cart.map(item => {
+                const isPeso = item.unitType === "peso";
+                const isAmount = item.mode === "amount";
+                const lineTotal = isAmount ? item.value : item.price * item.value;
+                return (
+                  <div key={item.cartId} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-200 truncate">{item.productName}</p>
+                      <p className="text-xs text-slate-500 font-mono truncate">
+                        {item.presentationName} · {formatMoney(item.price, currencySymbol)}{isPeso ? "/kg" : " c/u"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {isPeso || isAmount ? (
+                        <input type="number" min="0" step={isAmount ? "0.01" : "0.001"} value={item.value}
+                          onChange={e => setCart(prev => prev.map(i => i.cartId === item.cartId ? { ...i, value: Math.max(0, Number(e.target.value)) } : i))}
+                          className="w-16 px-1.5 py-1 bg-slate-600 border border-slate-500 rounded text-xs font-mono text-white text-center focus:outline-none focus:border-amber-500" />
+                      ) : (
+                        <>
+                          <button onClick={() => setCart(prev => prev.map(i => i.cartId === item.cartId ? { ...i, value: Math.max(1, i.value - 1) } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Minus size={10} className="text-slate-300" /></button>
+                          <span className="text-sm font-mono font-bold text-white w-5 text-center">{item.value}</span>
+                          <button onClick={() => setCart(prev => prev.map(i => i.cartId === item.cartId && (i.value + 1) * i.factor <= i.stock ? { ...i, value: i.value + 1 } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Plus size={10} className="text-slate-300" /></button>
+                        </>
+                      )}
+                      <button onClick={() => setCart(prev => prev.filter(i => i.cartId !== item.cartId))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
+                    </div>
+                    <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">{formatMoney(lineTotal, currencySymbol)}</span>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => setCart(prev => prev.map(i => i.id === item.id ? { ...i, qty: Math.max(1, i.qty - 1) } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Minus size={10} className="text-slate-300" /></button>
-                    <span className="text-sm font-mono font-bold text-white w-5 text-center">{item.qty}</span>
-                    <button onClick={() => setCart(prev => prev.map(i => i.id === item.id && i.qty < i.stock ? { ...i, qty: i.qty + 1 } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Plus size={10} className="text-slate-300" /></button>
-                    <button onClick={() => setCart(prev => prev.filter(i => i.id !== item.id))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
-                  </div>
-                  <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">{formatMoney((item.price || 0) * item.qty, currencySymbol)}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="mt-4 pt-4 border-t border-slate-700">
               <div className="mb-3">
@@ -390,6 +491,17 @@ const MovementsModule = ({
 
       {/* Barcode Scanner Modal */}
       {showScanner && <BarcodeScanner onDetected={handleBarcodeScan} onClose={() => setShowScanner(false)} />}
+
+      {/* Selector de presentación (kits/packs/granel) */}
+      {pickerProduct && (
+        <PresentationPicker
+          product={pickerProduct}
+          presentations={getEligiblePresentations(pickerProduct)}
+          currencySymbol={currencySymbol}
+          onConfirm={(presentation, mode, value) => addToCart(pickerProduct, presentation, mode, value)}
+          onClose={() => setPickerProduct(null)}
+        />
+      )}
     </div>
   );
 };

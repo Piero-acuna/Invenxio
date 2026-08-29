@@ -13,6 +13,7 @@ import {
 import {
   addProduct, updateProduct, deleteProduct, adjustProductStock, recordPurchase,
   subscribeToProductHistory, addWarehouseProduct, addWarehouseMovement, recordWarehousePurchase,
+  addPresentation,
 } from "../services/firestoreService";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
@@ -21,6 +22,7 @@ import { generateBarcode } from "../lib/barcode";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
 import ImportExcelModal from "../components/ImportExcelModal";
+import PresentationsManager from "../components/inventory/PresentationsManager";
 
 // ── Plantilla de importación por Excel ───────────────────────────────────
 // Encabezados EXACTOS que debe traer el archivo (fila 1). "SKU / Código" y
@@ -56,6 +58,7 @@ import { calcProfit, calcMarginPercent } from "../utils/finance";
 const InventoryModule = ({
   companyId, userName, canCreate, canEdit, canDelete, canViewFinance, canManageWarehouse,
   products, loadingProducts: loadingP, suppliers, locations = [], warehouseProducts = [],
+  presentations = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -111,6 +114,7 @@ const InventoryModule = ({
     name: "", sku: "", description: "",
     // — solo Inventario —
     price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "",
+    unitType: "unidad", // "unidad" | "peso" — ver 0019_kits_bulk_presentations.sql
     // — solo Almacén — "Precio de cada empaque" (whUnitPrice) es nuevo: antes
     // quedaba sin definir hasta que alguien lo editaba luego en Almacén →
     // Mis Productos.
@@ -438,6 +442,20 @@ const InventoryModule = ({
         packQty: packQty || null,
         barcode: newProd.barcode || generateBarcode(),
         status: "Agotado",
+        unitType: newProd.unitType,
+        baseUnitLabel: newProd.unitType === "peso" ? "kg" : "un",
+      });
+
+      // Presentación base automática — así el producto ya aparece listo
+      // para vender en el POS sin que el admin tenga que acordarse de
+      // crearla a mano (ver PresentationsManager.jsx para agregar más:
+      // packs, cajas, sacos, etc.).
+      await addPresentation(companyId, newProductId, {
+        name: newProd.unitType === "peso" ? "Kilogramo" : "Unidad",
+        factor: 1,
+        price: Number(newProd.price) || 0,
+        isDefaultSale: true,
+        isPurchaseOnly: false,
       });
 
       if (stock > 0 && cost > 0) {
@@ -681,6 +699,12 @@ const InventoryModule = ({
               </div>
               <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50"><StatusBadge status={selectedProduct.status} /></div>
 
+              {/* Presentaciones de venta (kits/packs/granel) */}
+              <PresentationsManager
+                companyId={companyId} product={selectedProduct} presentations={presentations}
+                canEdit={canEdit} canDelete={canDelete} currencySymbol={currencySymbol}
+              />
+
               {/* Ajustar Stock */}
               {canEdit && (
                 <div className="bg-slate-800/60 rounded-xl border border-slate-700/50 p-4">
@@ -813,6 +837,20 @@ const InventoryModule = ({
                         <label className="text-xs text-slate-400 mb-1 block">Unidades por Empaque</label>
                         <input type="number" min="1" value={newProd.packQty} onChange={e => setNewProd(p => ({ ...p, packQty: e.target.value }))} placeholder="Ej: 12"
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Se vende por</label>
+                        <div className="flex gap-1.5">
+                          {[{ v: "unidad", l: "Unidad" }, { v: "peso", l: "Peso (kg)" }].map(o => (
+                            <button key={o.v} type="button" onClick={() => setNewProd(p => ({ ...p, unitType: o.v }))}
+                              className={`flex-1 py-2 text-xs rounded-lg border transition-colors ${newProd.unitType === o.v ? "bg-amber-500/20 border-amber-500/50 text-amber-400" : "border-slate-700 text-slate-400 hover:border-slate-600"}`}>
+                              {o.l}
+                            </button>
+                          ))}
+                        </div>
+                        {newProd.unitType === "peso" && (
+                          <p className="text-[10px] text-slate-500 mt-1">El stock se maneja en KG con hasta 3 decimales (ej: 0.650 kg).</p>
+                        )}
                       </div>
                       <div className="col-span-2">
                         <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
