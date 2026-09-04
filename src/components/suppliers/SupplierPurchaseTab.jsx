@@ -75,7 +75,11 @@ export default function SupplierPurchaseTab({
                   <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-2">
                     <Package size={13} className="text-amber-400" /><span className="text-sm text-amber-400 font-medium">{pForm.product.name}</span>
                     {pForm.buyMode === "empaque" && (
-                      <span className="text-xs text-slate-500 ml-1">({pForm.product.packName} × {pForm.product.packQty} und)</span>
+                      <span className="text-xs text-slate-500 ml-1">
+                        ({pForm.product.packsPerCase > 1
+                          ? `${pForm.product.packName} = ${pForm.product.packsPerCase} packs × ${pForm.product.unitsPerPack} und = ${pForm.product.packQty} und`
+                          : `${pForm.product.packName} × ${pForm.product.packQty} und`})
+                      </span>
                     )}
                     <button onClick={() => setPForm(p => ({ ...p, product: null, productSearch: "" }))} className="ml-auto"><X size={13} className="text-slate-500" /></button>
                   </div>

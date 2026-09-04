@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { updateWarehouseProduct, deleteWarehouseProduct, addWarehouseMovement } from "../../services/firestoreService";
 import { logAndGetErrorMessage } from "../../utils/errors";
+import { calcUnitsPerCase } from "../../utils/packaging";
 import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
 import { useAuth } from "../../contexts/AuthContext";
@@ -23,7 +24,7 @@ import { formatMoney } from "../../utils/currency";
 export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", packQty: "", unitPrice: "" };
+  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", packsPerCase: "", unitsPerPack: "", unitPrice: "" };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form,     setForm]     = useState(EMPTY_FORM);
@@ -41,22 +42,41 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
 
   function openEdit(p) {
     setEditItem(p);
-    setForm({ ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", description: p.description || "", packName: p.packName || "", packQty: p.packQty ?? "", unitPrice: p.unitPrice ?? "" });
+    setForm({
+      ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", description: p.description || "", packName: p.packName || "",
+      // Si el producto ya tiene el desglose guardado (0019_product_
+      // presentations_and_case_breakdown.sql) se precarga tal cual. Si es
+      // de antes de esa migración (solo pack_qty, sin desglose), se
+      // completa con packsPerCase=1 para no forzar a adivinar la
+      // composición real solo para editar otra cosa — el total (1 ×
+      // unitsPerPack) queda idéntico al pack_qty actual hasta que alguien
+      // lo corrija a propósito.
+      packsPerCase: p.packsPerCase ?? 1,
+      unitsPerPack: p.unitsPerPack ?? (p.packQty ?? ""),
+      unitPrice: p.unitPrice ?? "",
+    });
     setError(""); setShowForm(true);
   }
 
   async function handleSave() {
     if (!form.name.trim())              { setError("El nombre es obligatorio."); return; }
-    if (!form.packName.trim())          { setError("Indica la unidad de empaque (ej: Caja, Paquete)."); return; }
-    if (!form.packQty || Number(form.packQty) <= 0) { setError("Indica cuántas unidades trae cada empaque."); return; }
+    if (!form.packName.trim())          { setError('Indica el nombre de la unidad mayorista (ej: "Caja").'); return; }
+    if (!form.packsPerCase || Number(form.packsPerCase) <= 0) { setError(`Indica cuántos packs trae la ${form.packName || "Caja"}.`); return; }
+    if (!form.unitsPerPack || Number(form.unitsPerPack) <= 0) { setError("Indica cuántas unidades trae cada pack."); return; }
     setError(""); setSaving(true);
     try {
+      const packsPerCase = Number(form.packsPerCase);
+      const unitsPerPack = Number(form.unitsPerPack);
       const payload = {
         name: form.name.trim(),
         sku: form.sku.trim(),
         description: form.description.trim(),
         packName: form.packName.trim(),
-        packQty: Number(form.packQty),
+        packQty: calcUnitsPerCase(packsPerCase, unitsPerPack),
+        // Desglose informativo — packQty (arriba) sigue siendo la única
+        // cifra que usan las RPC de almacén (ver 0019_product_
+        // presentations_and_case_breakdown.sql).
+        packsPerCase, unitsPerPack,
         unitPrice: form.unitPrice ? Number(form.unitPrice) : null,
       };
       await updateWarehouseProduct(companyId, editItem.id, payload);
@@ -138,17 +158,30 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
             <div>
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Unidad por empaque *</label>
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Nombre de unidad mayorista *</label>
               <input value={form.packName} onChange={e => setF("packName", e.target.value)} placeholder="Ej: Caja"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
+            {/* Jerarquía de 3 niveles: Caja → Packs → Unidades — mismo
+                criterio que "Nuevo Producto"; el total (lo único que usan
+                las RPC de almacén) se calcula acá mismo, en vivo. */}
             <div>
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Unidades por empaque *</label>
-              <input type="number" min="1" value={form.packQty} onChange={e => setF("packQty", e.target.value)} placeholder="Ej: 24"
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cuántos Packs trae la {form.packName || "Caja"}? *</label>
+              <input type="number" min="1" value={form.packsPerCase} onChange={e => setF("packsPerCase", e.target.value)} placeholder="Ej: 10"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
+            <div>
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cuántas Unidades trae cada Pack? *</label>
+              <input type="number" min="1" value={form.unitsPerPack} onChange={e => setF("unitsPerPack", e.target.value)} placeholder="Ej: 6"
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
+            </div>
+            {Number(form.packsPerCase) > 0 && Number(form.unitsPerPack) > 0 && (
+              <div className="col-span-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-[11px] text-amber-300">
+                📦 1 {form.packName || "Caja"} = {form.packsPerCase} packs × {form.unitsPerPack} und = <strong>{calcUnitsPerCase(form.packsPerCase, form.unitsPerPack)} unidades</strong>
+              </div>
+            )}
             <div className="col-span-2 sm:col-span-1">
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Precio de cada empaque ({currencySymbol})</label>
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Precio de cada {form.packName || "Caja"} ({currencySymbol})</label>
               <input type="number" min="0" step="0.01" value={form.unitPrice} onChange={e => setF("unitPrice", e.target.value)} placeholder="0.00"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
@@ -221,7 +254,10 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
                     <button onClick={() => handleDelete(p)} className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={12}/></button>
                   </div>
                 </div>
-                <p className="text-[11px] text-amber-400/80">📦 {p.packName} × {p.packQty} und{Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} por ${p.packName}` : ""}</p>
+                <p className="text-[11px] text-amber-400/80">
+                  📦 {p.packsPerCase > 1 ? `${p.packName} = ${p.packsPerCase} packs × ${p.unitsPerPack} und = ${p.packQty} und` : `${p.packName} × ${p.packQty} und`}
+                  {Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} por ${p.packName}` : ""}
+                </p>
                 {p.description && <p className="text-[11px] text-slate-500 line-clamp-2">{p.description}</p>}
 
                 {/* Ubicación, nombre y cantidad por ubicación */}

@@ -65,7 +65,11 @@ export default function SupplierSaleTab({
                 {ssForm.product && (
                   <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-2">
                     <Package size={13} className="text-amber-400" /><span className="text-sm text-amber-400 font-medium">{ssForm.product.name}</span>
-                    <span className="text-xs text-slate-500 ml-1">({ssForm.product.packName} × {ssForm.product.packQty} und)</span>
+                    <span className="text-xs text-slate-500 ml-1">
+                      ({ssForm.product.packsPerCase > 1
+                        ? `${ssForm.product.packName} = ${ssForm.product.packsPerCase} packs × ${ssForm.product.unitsPerPack} und = ${ssForm.product.packQty} und`
+                        : `${ssForm.product.packName} × ${ssForm.product.packQty} und`})
+                    </span>
                     <button onClick={() => setSsForm(p => ({ ...p, product: null, productSearch: "" }))} className="ml-auto"><X size={13} className="text-slate-500" /></button>
                   </div>
                 )}

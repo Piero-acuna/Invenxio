@@ -281,6 +281,9 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
               <label className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider mb-1 block">
                 Cantidad de {packName} {form.product ? `(${packQty} und c/u)` : ""} *
               </label>
+              {form.product?.packsPerCase > 1 && (
+                <p className="text-[10px] text-slate-500 mb-1">1 {packName} = {form.product.packsPerCase} packs × {form.product.unitsPerPack} und</p>
+              )}
               <input type="number" min="1" value={form.qty} onChange={e => setF("qty", e.target.value)} placeholder="Ej: 3"
                 className="w-full px-3 py-2.5 bg-slate-900 border border-amber-500/30 rounded-lg text-sm text-amber-300 font-mono placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
             </div>
@@ -291,11 +294,17 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
             </div>
           </div>
 
-          {/* Preview de conversión caja → unidades en "Enviar a Tienda" */}
+          {/* Preview de conversión caja → unidades en "Enviar a Tienda" —
+              si la caja tiene el desglose Packs/Unidades guardado, se
+              muestra completo (ej. 2 Cajas = 20 packs × 6 und = 120 und). */}
           {isEnvio && packCount > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
               <span>📦</span>
-              <span><strong>{packCount}</strong> {packName} × <strong>{packQty}</strong> und = se suman <strong className="text-amber-400">{unitQty}</strong> unidades al stock de la tienda</span>
+              <span>
+                <strong>{packCount}</strong> {packName}
+                {form.product?.packsPerCase > 1 && <> = <strong>{packCount * form.product.packsPerCase}</strong> packs × <strong>{form.product.unitsPerPack}</strong> und</>}
+                {" "}× <strong>{packQty}</strong> und = se suman <strong className="text-amber-400">{unitQty}</strong> unidades al stock de la tienda
+              </span>
             </div>
           )}
 

@@ -240,7 +240,7 @@ const SuppliersModule = ({
         setPMsg(msg);
         await emitInvoice({
           partyName: pForm.supplier,
-          items: [{ name: targetProduct.name, description: targetProduct.description || pForm.product.description || "", qty, unitPrice: cost, total }],
+          items: [{ name: `${targetProduct.name} — ${targetProduct.packName}`, description: targetProduct.description || pForm.product.description || "", qty, unitPrice: cost, total }],
           total, note: pForm.note, operationType: "compra",
         });
       }
@@ -336,7 +336,7 @@ const SuppliersModule = ({
       if (ssForm.status === "Entregado") {
         await emitInvoice({
           partyName: ssForm.supplier,
-          items: [{ name: ssForm.product.name, description: ssForm.product.description || "", qty, unitPrice: Number(ssForm.unitPrice), total: qty * Number(ssForm.unitPrice) }],
+          items: [{ name: `${ssForm.product.name} — ${ssForm.product.packName}`, description: ssForm.product.description || "", qty, unitPrice: Number(ssForm.unitPrice), total: qty * Number(ssForm.unitPrice) }],
           total: qty * Number(ssForm.unitPrice),
           note: ssForm.note, operationType: "venta",
         });
@@ -380,7 +380,7 @@ const SuppliersModule = ({
       await updateSupplierSaleStatus(companyId, sale.id, "Entregado");
       await emitInvoice({
         partyName: sale.supplier,
-        items: [{ name: sale.product, description: sale.description || "", qty: sale.qty, unitPrice: sale.unitPrice, total: sale.total }],
+        items: [{ name: sale.packName ? `${sale.product} — ${sale.packName}` : sale.product, description: sale.description || "", qty: sale.qty, unitPrice: sale.unitPrice, total: sale.total }],
         total: sale.total,
         note: sale.note, operationType: "venta",
       });

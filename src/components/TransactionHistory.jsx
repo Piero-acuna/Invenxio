@@ -62,12 +62,21 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
     rawTransactions.forEach(t => {
       if (t.type === "venta"  && !canSell) return;
       if (t.type === "compra" && !canPurchase) return;
+      // BUG QUE ESTO EVITA: t.qty en una venta SIEMPRE está en unidades
+      // base (ver record_sale() SQL) — incluso cuando se vendió por Pack.
+      // Mostrar ese número pegado a t.packName ("12 Pack") se lee como "12
+      // Packs" cuando en realidad fueron 2 Packs de 6 unidades cada uno.
+      // presCount es la cantidad REAL de esa presentación vendida
+      // (qty ÷ packQty); si no es una venta por presentación, queda null y
+      // se sigue mostrando la unidad simple de siempre.
+      const isPackSale = t.type === "venta" && t.packMode && Number(t.packQty) > 1;
+      const presCount = isPackSale ? Math.round(Number(t.qty) / Number(t.packQty)) : null;
       items.push({
         id: `tx-${t.id}`,
         source: t.type === "compra" && t.target === "almacen" ? "Proveedores" : "Inventario",
         type: t.type,
         date: t.date, time: t.time || "",
-        product: t.product, sku: t.sku, description: t.description || "", qty: t.qty, unit: t.packName || "",
+        product: t.product, sku: t.sku, description: t.description || "", qty: t.qty, unit: t.packName || "", presCount,
         amount: t.total ?? null,
         party: t.supplier || t.client || "—",
         note: t.note || "",
@@ -306,7 +315,8 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
         "Producto":           t.product || "",
         "Descripción":        t.description || "",
         "SKU":                t.sku || "",
-        "Cantidad":           t.qty ?? "",
+        "Cantidad (unidades)": t.qty ?? "",
+        "Presentación":       t.presCount != null ? `${t.presCount} ${t.unit}` : (t.unit || ""),
       };
       if (canViewFinance && t.amount != null) {
         base[`Total (${currencySymbol})`] = Number(t.amount.toFixed(2));
@@ -331,10 +341,22 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       const raw = t.raw || t;
       const isVenta = t.type === "venta";
       const isVentaProveedor = t.type === "venta_proveedor";
-      // Una transacción puede tener múltiples ítems (carrito) o uno solo
+      // Una transacción puede tener múltiples ítems (carrito) o uno solo.
+      // Si se vendió por presentación (Pack/Caja…), se reconstruye la línea
+      // con la cantidad y precio REALES de esa presentación (ej. "2 Pack ×
+      // S/25.00"), no como "12 und" a un precio unitario derivado — mismo
+      // criterio que el comprobante original (ver handleSale en
+      // MovementsModule.jsx), para que un reimpreso se vea igual al que
+      // recibió el cliente la primera vez.
       const items = raw.items?.length
         ? raw.items.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price ?? i.unitPrice, total: (i.price ?? i.unitPrice) * i.qty }))
-        : [{ name: t.product || "—", description: t.description || "", qty: t.qty, unitPrice: raw.unitCost ?? raw.unitPrice ?? 0, total: t.amount ?? 0 }];
+        : t.presCount != null
+          ? [{
+              name: t.unit ? `${t.product || "—"} — ${t.unit}` : (t.product || "—"),
+              description: t.description || "", qty: t.presCount,
+              unitPrice: t.presCount > 0 ? (t.amount ?? 0) / t.presCount : 0, total: t.amount ?? 0,
+            }]
+          : [{ name: t.product || "—", description: t.description || "", qty: t.qty, unitPrice: raw.unitCost ?? raw.unitPrice ?? 0, total: t.amount ?? 0 }];
       generateInvoicePDF({
         billing,
         docType:     isVenta ? "VENTA" : "PROVEEDOR",
@@ -594,7 +616,13 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                         <div className="text-slate-500 font-mono">{t.sku}</div>
                         {t.description && <div className="text-slate-500 text-[11px] max-w-xs truncate">{t.description}</div>}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-300">{t.qty}{t.unit ? <span className="text-slate-500 font-normal"> {t.unit}</span> : ""}</td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-300">
+                        {t.presCount != null ? (
+                          <>{t.presCount}<span className="text-slate-500 font-normal"> {t.unit}</span> <span className="text-slate-600 font-normal text-[10px]">({t.qty} und)</span></>
+                        ) : (
+                          <>{t.qty}{t.unit ? <span className="text-slate-500 font-normal"> {t.unit}</span> : ""}</>
+                        )}
+                      </td>
                       {canViewFinance && (
                         <td className={`py-2.5 px-3 text-right font-mono font-bold ${t.amount == null ? "text-slate-600" : (t.type === "compra" || t.type === "ajuste_salida") ? "text-red-400" : "text-emerald-400"}`}>
                           {t.amount != null ? `${(t.type === "compra" || t.type === "ajuste_salida") ? "-" : "+"} ${formatMoney(t.amount, currencySymbol)}` : "—"}

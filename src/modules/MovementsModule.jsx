@@ -18,6 +18,7 @@ import TransactionHistory from "../components/TransactionHistory";
 import { BarcodeScanner } from "../components/BarcodeUI";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
+import { getSellablePresentations, findPresentationByCode } from "../utils/packaging";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 2 — MOVEMENTS
@@ -114,10 +115,28 @@ const MovementsModule = ({
         .map(item => {
           const live = products.find(p => p.id === item.id);
           const liveStock = live.stock || 0;
-          const cappedQty = Math.min(item.qty, liveStock);
-          if (live.price !== item.price || live.name !== item.name || live.description !== item.description || cappedQty !== item.qty) {
+          // La presentación vendida puede haber cambiado de precio, o
+          // incluso haber sido borrada (se editó el producto mientras
+          // seguía en el carrito) — se re-resuelve contra las
+          // presentaciones vendibles ACTUALES; si ya no existe, se cae a
+          // la presentación base ("Unidad") en vez de dejar el ítem con
+          // datos que ya no corresponden a nada.
+          const livePresentations = getSellablePresentations(live);
+          const livePres = livePresentations.find(p => p.id === item.presentationId) || livePresentations[0];
+          const liveMultiplier = Number(livePres?.multiplier) || 1;
+          const livePrice = Number(livePres?.price) || 0;
+          const maxQty = Math.floor(liveStock / liveMultiplier);
+          const cappedQty = Math.min(item.qty, maxQty);
+          if (
+            livePrice !== item.price || liveMultiplier !== item.multiplier || livePres?.id !== item.presentationId ||
+            live.name !== item.name || live.description !== item.description || cappedQty !== item.qty
+          ) {
             changed = true;
-            return { ...item, price: live.price, name: live.name, description: live.description, stock: liveStock, qty: cappedQty };
+            return {
+              ...item, price: livePrice, multiplier: liveMultiplier, presentationId: livePres?.id,
+              presentationName: livePres?.name, name: live.name, description: live.description,
+              stock: liveStock, qty: cappedQty,
+            };
           }
           return item;
         })
@@ -137,25 +156,39 @@ const MovementsModule = ({
   ) : [];
   const cartTotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  const addToCart = useCallback((product) => {
+
+  // Agrega una PRESENTACIÓN de un producto al carrito (no el producto
+  // "pelado") — cada combinación producto+presentación es su propia línea,
+  // así "Galleta — Unidad" y "Galleta — Pack" pueden convivir en el mismo
+  // carrito. `qty` en el carrito es "cuántas de esa presentación" (ej. 2
+  // Packs); el tope real es en unidades base (maxQty = stock / multiplier).
+  const addToCart = useCallback((product, presentation) => {
     setSSearch("");
+    const multiplier = Number(presentation.multiplier) || 1;
+    const maxQty = Math.floor((product.stock || 0) / multiplier);
     setCart(prev => {
-      const ex = prev.find(i => i.id === product.id);
+      const ex = prev.find(i => i.id === product.id && i.presentationId === presentation.id);
       return ex
-        ? prev.map(i => i.id === product.id ? { ...i, qty: Math.min(i.qty + 1, product.stock) } : i)
-        : [...prev, { ...product, qty: 1 }];
+        ? prev.map(i => (i === ex ? { ...i, qty: Math.min(i.qty + 1, maxQty) } : i))
+        : [...prev, {
+            id: product.id, name: product.name, sku: product.sku, description: product.description,
+            stock: product.stock || 0,
+            presentationId: presentation.id, presentationName: presentation.name, multiplier,
+            price: Number(presentation.price) || 0, qty: Math.min(1, maxQty),
+          }];
     });
   }, []);
 
   const handleBarcodeScan = useCallback((code) => {
     setShowScanner(false);
-    const found = products.find(p => p.barcode === code || p.sku === code);
+    const found = findPresentationByCode(products, code);
     if (found) {
-      if (found.stock <= 0) {
-        setScanFeedback(`⚠️ "${found.name}" está agotado`);
+      const { product, presentation } = found;
+      if (product.stock <= 0 || Number(presentation.multiplier) > product.stock) {
+        setScanFeedback(`⚠️ "${product.name}" ${presentation.name !== "Unidad" ? `(${presentation.name}) ` : ""}está agotado`);
       } else {
-        addToCart(found);
-        setScanFeedback(`✅ "${found.name}" agregado al carrito`);
+        addToCart(product, presentation);
+        setScanFeedback(`✅ "${product.name}"${presentation.name !== "Unidad" ? ` — ${presentation.name}` : ""} agregado al carrito`);
       }
     } else {
       setScanFeedback(`❌ No se encontró producto con código: ${code}`);
@@ -183,7 +216,10 @@ const MovementsModule = ({
             docType: "VENTA",
             partyLabel: "Cliente",
             partyName: clientName.trim() || "Cliente varios",
-            items: cart.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty })),
+            items: cart.map(i => ({
+              name: i.presentationName && i.presentationName !== "Unidad" ? `${i.name} — ${i.presentationName}` : i.name,
+              description: i.description || "", qty: i.qty, unitPrice: i.price, total: i.price * i.qty,
+            })),
             total: cartTotal,
             paymentMethod,
             currencySymbol,
@@ -247,22 +283,46 @@ const MovementsModule = ({
               {sSearch ? (
                 <div className="mt-3 space-y-2">
                   {sFiltered.length === 0 && <p className="text-slate-500 text-sm text-center py-4">Sin resultados</p>}
-                  {sFiltered.slice(0, 6).map(p => (
-                    <button key={p.id} onClick={() => addToCart(p)}
-                      className="w-full text-left p-3 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 hover:border-amber-500/40 rounded-xl transition-all flex items-center gap-3 group">
-                      <div className="w-9 h-9 bg-slate-600 rounded-lg flex items-center justify-center flex-shrink-0"><Package size={15} className="text-slate-400" /></div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-200 group-hover:text-amber-400 transition-colors">{p.name}</p>
-                        <p className="text-xs text-slate-500 font-mono">{p.sku} · Stock: {p.stock}</p>
-                        {p.description && <p className="text-xs text-slate-500 truncate mt-0.5">{p.description}</p>}
+                  {sFiltered.slice(0, 6).map(p => {
+                    const presentations = getSellablePresentations(p);
+                    const single = presentations.length === 1 ? presentations[0] : null;
+                    return (
+                      <div key={p.id}
+                        className={`w-full text-left p-3 bg-slate-700/50 border border-slate-600/50 rounded-xl transition-all ${single ? "hover:bg-slate-700 hover:border-amber-500/40 cursor-pointer" : ""}`}
+                        {...(single ? { onClick: () => addToCart(p, single) } : {})}>
+                        <div className="flex items-center gap-3 group">
+                          <div className="w-9 h-9 bg-slate-600 rounded-lg flex items-center justify-center flex-shrink-0"><Package size={15} className="text-slate-400" /></div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-200 group-hover:text-amber-400 transition-colors">{p.name}</p>
+                            <p className="text-xs text-slate-500 font-mono">{p.sku} · Stock: {p.stock}</p>
+                            {p.description && <p className="text-xs text-slate-500 truncate mt-0.5">{p.description}</p>}
+                          </div>
+                          {single && (
+                            <>
+                              <div className="text-right mr-2">
+                                <p className="text-sm font-bold font-mono text-amber-400">{formatMoney(single.price, currencySymbol)}</p>
+                                <StatusBadge status={p.status} />
+                              </div>
+                              <Plus size={16} className="text-slate-500 group-hover:text-amber-400 flex-shrink-0 transition-colors" />
+                            </>
+                          )}
+                        </div>
+                        {!single && (
+                          <div className="flex flex-wrap gap-1.5 mt-2.5">
+                            {presentations.map(pres => {
+                              const maxQty = Math.floor((p.stock || 0) / (Number(pres.multiplier) || 1));
+                              return (
+                                <button key={pres.id} type="button" disabled={maxQty < 1} onClick={() => addToCart(p, pres)}
+                                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 hover:border-amber-500/40 rounded-lg text-xs font-semibold text-slate-300 hover:text-amber-400 transition-colors flex items-center gap-1.5">
+                                  {pres.name} <span className="font-mono text-amber-400">{formatMoney(pres.price, currencySymbol)}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-right mr-2">
-                        <p className="text-sm font-bold font-mono text-amber-400">{formatMoney(p.price, currencySymbol)}</p>
-                        <StatusBadge status={p.status} />
-                      </div>
-                      <Plus size={16} className="text-slate-500 group-hover:text-amber-400 flex-shrink-0 transition-colors" />
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="mt-4">
@@ -271,21 +331,42 @@ const MovementsModule = ({
                   </p>
                   {loadingP ? <Spinner /> : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {recentProducts.map(p => (
-                        <button key={p.id} onClick={() => addToCart(p)}
-                          className="p-3 bg-slate-700/40 hover:bg-slate-700 border border-slate-600/40 hover:border-amber-500/40 rounded-xl transition-all text-left group">
-                          <div className="w-8 h-8 bg-slate-600 rounded-lg flex items-center justify-center mb-2">
-                            <Package size={14} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
+                      {recentProducts.map(p => {
+                        const presentations = getSellablePresentations(p);
+                        const single = presentations.length === 1 ? presentations[0] : null;
+                        return (
+                          <div key={p.id}
+                            className={`p-3 bg-slate-700/40 border border-slate-600/40 rounded-xl transition-all text-left group ${single ? "hover:bg-slate-700 hover:border-amber-500/40 cursor-pointer" : ""}`}
+                            {...(single ? { onClick: () => addToCart(p, single) } : {})}>
+                            <div className="w-8 h-8 bg-slate-600 rounded-lg flex items-center justify-center mb-2">
+                              <Package size={14} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
+                            </div>
+                            <p className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 group-hover:text-amber-400 transition-colors">{p.name}</p>
+                            {p.description && <p className="text-[11px] text-slate-500 leading-tight line-clamp-1 mt-0.5">{p.description}</p>}
+                            {single ? (
+                              <>
+                                <p className="text-xs font-bold font-mono text-amber-400 mt-1.5">{formatMoney(single.price, currencySymbol)}</p>
+                                <div className="flex items-center justify-between mt-1">
+                                  <span className="text-xs text-slate-500 font-mono">x{p.stock}</span>
+                                  <Plus size={12} className="text-slate-500 group-hover:text-amber-400 transition-colors" />
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {presentations.map(pres => {
+                                  const maxQty = Math.floor((p.stock || 0) / (Number(pres.multiplier) || 1));
+                                  return (
+                                    <button key={pres.id} type="button" disabled={maxQty < 1} onClick={() => addToCart(p, pres)}
+                                      className="px-1.5 py-1 bg-slate-800 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 hover:border-amber-500/40 rounded text-[10px] font-semibold text-slate-300 hover:text-amber-400 transition-colors">
+                                      {pres.name} <span className="font-mono text-amber-400">{formatMoney(pres.price, currencySymbol)}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 group-hover:text-amber-400 transition-colors">{p.name}</p>
-                          {p.description && <p className="text-[11px] text-slate-500 leading-tight line-clamp-1 mt-0.5">{p.description}</p>}
-                          <p className="text-xs font-bold font-mono text-amber-400 mt-1.5">{formatMoney(p.price, currencySymbol)}</p>
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-xs text-slate-500 font-mono">x{p.stock}</span>
-                            <Plus size={12} className="text-slate-500 group-hover:text-amber-400 transition-colors" />
-                          </div>
-                        </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -306,22 +387,31 @@ const MovementsModule = ({
                   <p className="text-xs text-center">Busca, toca o escanea productos</p>
                 </div>
               )}
-              {cart.map(item => (
-                <div key={item.id} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-slate-200 truncate">{item.name}</p>
-                    <p className="text-xs text-slate-500 font-mono">{formatMoney(item.price, currencySymbol)} c/u</p>
-                    {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
+              {cart.map(item => {
+                const maxQty = Math.floor((item.stock || 0) / (Number(item.multiplier) || 1));
+                const isSameLine = i => i.id === item.id && i.presentationId === item.presentationId;
+                return (
+                  <div key={`${item.id}:${item.presentationId}`} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-200 truncate">
+                        {item.name}
+                        {item.presentationName && item.presentationName !== "Unidad" && (
+                          <span className="ml-1.5 px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded text-[10px] font-semibold align-middle">{item.presentationName}</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-slate-500 font-mono">{formatMoney(item.price, currencySymbol)} c/u</p>
+                      {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => setCart(prev => prev.map(i => isSameLine(i) ? { ...i, qty: Math.max(1, i.qty - 1) } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Minus size={10} className="text-slate-300" /></button>
+                      <span className="text-sm font-mono font-bold text-white w-5 text-center">{item.qty}</span>
+                      <button onClick={() => setCart(prev => prev.map(i => isSameLine(i) && i.qty < maxQty ? { ...i, qty: i.qty + 1 } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Plus size={10} className="text-slate-300" /></button>
+                      <button onClick={() => setCart(prev => prev.filter(i => !isSameLine(i)))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
+                    </div>
+                    <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">{formatMoney((item.price || 0) * item.qty, currencySymbol)}</span>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => setCart(prev => prev.map(i => i.id === item.id ? { ...i, qty: Math.max(1, i.qty - 1) } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Minus size={10} className="text-slate-300" /></button>
-                    <span className="text-sm font-mono font-bold text-white w-5 text-center">{item.qty}</span>
-                    <button onClick={() => setCart(prev => prev.map(i => i.id === item.id && i.qty < i.stock ? { ...i, qty: i.qty + 1 } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Plus size={10} className="text-slate-300" /></button>
-                    <button onClick={() => setCart(prev => prev.filter(i => i.id !== item.id))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
-                  </div>
-                  <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">{formatMoney((item.price || 0) * item.qty, currencySymbol)}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="mt-4 pt-4 border-t border-slate-700">
               <div className="mb-3">

@@ -13,7 +13,6 @@ import {
 import {
   addProduct, updateProduct, deleteProduct, adjustProductStock, recordPurchase,
   subscribeToProductHistory, addWarehouseProduct, addWarehouseMovement, recordWarehousePurchase,
-  addPresentation,
 } from "../services/firestoreService";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
@@ -22,35 +21,55 @@ import { generateBarcode } from "../lib/barcode";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
 import ImportExcelModal from "../components/ImportExcelModal";
-import PresentationsManager from "../components/inventory/PresentationsManager";
 
 // ── Plantilla de importación por Excel ───────────────────────────────────
 // Encabezados EXACTOS que debe traer el archivo (fila 1). "SKU / Código" y
 // "Código de Barras" son opcionales — si se dejan vacíos, se autogeneran
 // igual que en el alta manual (ver `nextSku` y generateBarcode()).
+// "Nombre del Empaque" / "Precio del Empaque" / "Código de Barras del
+// Empaque" también son opcionales: si el producto trae "Unidades por
+// Empaque" pero se dejan vacías, se sintetiza una presentación "Pack" al
+// precio unitario × esas unidades (mismo comportamiento de siempre); si se
+// llenan, el producto queda con su propio precio de Pack independiente
+// (para un descuento por volumen real) — igual que crear el producto a
+// mano con dos presentaciones (ver PresentationsEditor).
 const PRODUCT_IMPORT_HEADERS = [
   "SKU / Código", "Nombre", "Descripción", "Categoría",
   "Precio de Venta", "Costo", "Stock Inicial", "Stock Mínimo",
-  "Unidades por Empaque", "Código de Barras",
+  "Unidades por Empaque", "Nombre del Empaque", "Precio del Empaque", "Código de Barras del Empaque",
+  "Código de Barras",
 ];
 const PRODUCT_IMPORT_EXAMPLE = [
-  { "SKU / Código": "001", "Nombre": "Coca Cola 500ml", "Descripción": "Bebida gaseosa", "Categoría": "Bebidas", "Precio de Venta": 3.5, "Costo": 2.2, "Stock Inicial": 48, "Stock Mínimo": 10, "Unidades por Empaque": 6, "Código de Barras": "" },
-  { "SKU / Código": "", "Nombre": "Arroz Extra 1kg", "Descripción": "", "Categoría": "Abarrotes", "Precio de Venta": 5.9, "Costo": 4.3, "Stock Inicial": 30, "Stock Mínimo": 5, "Unidades por Empaque": "", "Código de Barras": "" },
+  { "SKU / Código": "001", "Nombre": "Coca Cola 500ml", "Descripción": "Bebida gaseosa", "Categoría": "Bebidas", "Precio de Venta": 3.5, "Costo": 2.2, "Stock Inicial": 48, "Stock Mínimo": 10, "Unidades por Empaque": 6, "Nombre del Empaque": "", "Precio del Empaque": "", "Código de Barras del Empaque": "", "Código de Barras": "" },
+  { "SKU / Código": "", "Nombre": "Arroz Extra 1kg", "Descripción": "", "Categoría": "Abarrotes", "Precio de Venta": 5.9, "Costo": 4.3, "Stock Inicial": 30, "Stock Mínimo": 5, "Unidades por Empaque": "", "Nombre del Empaque": "", "Precio del Empaque": "", "Código de Barras del Empaque": "", "Código de Barras": "" },
+  { "SKU / Código": "", "Nombre": "Galleta de Chocolate", "Descripción": "", "Categoría": "Snacks", "Precio de Venta": 1, "Costo": 0.5, "Stock Inicial": 60, "Stock Mínimo": 12, "Unidades por Empaque": 6, "Nombre del Empaque": "Pack", "Precio del Empaque": 5, "Código de Barras del Empaque": "", "Código de Barras": "" },
 ];
 
 // Plantilla para importar productos de ALMACÉN (independiente de la de
 // Inventario — ver PRODUCT_IMPORT_HEADERS de arriba). "Ubicación" debe
 // coincidir con el NOMBRE de una ubicación ya creada en Almacén → Mapa
-// (no se crean ubicaciones nuevas desde acá).
+// (no se crean ubicaciones nuevas desde acá). "Packs por Caja" / "Unidades
+// por Pack" son opcionales — si se llenan AMBAS, reemplazan a "Unidades
+// por Empaque" (se calcula el total = una × la otra, igual que en el alta
+// manual); si se dejan vacías, se usa "Unidades por Empaque" directo como
+// antes.
 const WAREHOUSE_IMPORT_HEADERS = [
-  "Nombre", "SKU / Código", "Nombre de Unidad de Empaque", "Unidades por Empaque",
+  "Nombre", "SKU / Código", "Nombre de Unidad de Empaque",
+  "Unidades por Empaque", "Packs por Caja", "Unidades por Pack",
   "Precio de cada Empaque", "Cantidad de Empaques", "Descripción", "Ubicación",
 ];
 const WAREHOUSE_IMPORT_EXAMPLE = [
-  { "Nombre": "Coca Cola 500ml", "SKU / Código": "", "Nombre de Unidad de Empaque": "Caja", "Unidades por Empaque": 24, "Precio de cada Empaque": 50, "Cantidad de Empaques": 5, "Descripción": "", "Ubicación": "Zona A" },
-  { "Nombre": "Arroz Extra 1kg", "SKU / Código": "", "Nombre de Unidad de Empaque": "Saco", "Unidades por Empaque": 12, "Precio de cada Empaque": 42, "Cantidad de Empaques": 3, "Descripción": "", "Ubicación": "Zona A" },
+  { "Nombre": "Coca Cola 500ml", "SKU / Código": "", "Nombre de Unidad de Empaque": "Caja", "Unidades por Empaque": 24, "Packs por Caja": "", "Unidades por Pack": "", "Precio de cada Empaque": 50, "Cantidad de Empaques": 5, "Descripción": "", "Ubicación": "Zona A" },
+  { "Nombre": "Arroz Extra 1kg", "SKU / Código": "", "Nombre de Unidad de Empaque": "Saco", "Unidades por Empaque": 12, "Packs por Caja": "", "Unidades por Pack": "", "Precio de cada Empaque": 42, "Cantidad de Empaques": 3, "Descripción": "", "Ubicación": "Zona A" },
+  { "Nombre": "Galleta de Chocolate", "SKU / Código": "", "Nombre de Unidad de Empaque": "Caja", "Unidades por Empaque": "", "Packs por Caja": 10, "Unidades por Pack": 6, "Precio de cada Empaque": 45, "Cantidad de Empaques": 8, "Descripción": "", "Ubicación": "Zona A" },
 ];
 import { calcProfit, calcMarginPercent } from "../utils/finance";
+import {
+  calcUnitsPerCase, buildDefaultPresentations, makePresentationId,
+  validatePresentations, deriveLegacyFieldsFromPresentations,
+  getSellablePresentations, toEditablePresentations,
+} from "../utils/packaging";
+import PresentationsEditor from "../components/inventory/PresentationsEditor";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 1 — INVENTORY
@@ -58,7 +77,6 @@ import { calcProfit, calcMarginPercent } from "../utils/finance";
 const InventoryModule = ({
   companyId, userName, canCreate, canEdit, canDelete, canViewFinance, canManageWarehouse,
   products, loadingProducts: loadingP, suppliers, locations = [], warehouseProducts = [],
-  presentations = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -78,6 +96,19 @@ const InventoryModule = ({
   const [adjustType,      setAdjustType]      = useState("add");
   const [adjusting,       setAdjusting]       = useState(false);
   const [adjustError,     setAdjustError]     = useState("");
+  // Qué presentación está contando el "Ajustar Stock" (Unidad/Pack/Caja...)
+  // — se resetea a la base ("Unidad") cada vez que se abre un producto
+  // distinto, para no arrastrar la presentación del producto anterior.
+  const [adjustPresentationId, setAdjustPresentationId] = useState(null);
+  const adjustPresentations = useMemo(
+    () => (selectedProduct ? getSellablePresentations(selectedProduct) : []),
+    [selectedProduct]
+  );
+  const adjustPresentation = useMemo(
+    () => adjustPresentations.find(p => p.id === adjustPresentationId) || adjustPresentations.find(p => Number(p.multiplier) === 1) || adjustPresentations[0] || null,
+    [adjustPresentations, adjustPresentationId]
+  );
+  useEffect(() => { setAdjustPresentationId(null); }, [selectedProductId]);
 
   // Historial del producto seleccionado — vive en la subcolección
   // products/{id}/history (ver src/services/firestore/products.js), NO en
@@ -112,26 +143,20 @@ const InventoryModule = ({
   const [newProd, setNewProd] = useState({
     destino: "inventario", // "inventario" | "almacen"
     name: "", sku: "", description: "",
-    // — solo Inventario —
-    price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "",
-    unitType: "unidad", // "unidad" | "peso" — ver 0019_kits_bulk_presentations.sql
-    // — Jerarquía de abastecimiento Caja → Packs → Unidades (ver comentario
-    // grande en handleAddProduct): la presentación "Unidad" (factor 1,
-    // mismo precio/barcode del producto base) SIEMPRE se crea. Esta es la
-    // SEGUNDA presentación vendible, opcional — "Pack" con su propio
-    // multiplicador de stock, precio y código de barras exterior. Nombres
-    // con prefijo "pres" para no confundirse con `packQty` de arriba, que
-    // es un campo distinto (tamaño de LOTE de compra, no de venta).
-    hasPresPack: false, presPackName: "Pack", presPackFactor: "6", presPackPrice: "", presPackBarcode: "",
-    // — solo Almacén — "Precio de cada empaque" (whUnitPrice) es nuevo: antes
-    // quedaba sin definir hasta que alguien lo editaba luego en Almacén →
-    // Mis Productos. `whPacksPerBox` × `whUnitsPerPack` reemplaza al viejo
-    // campo único "Unidades por empaque": el total de unidades base que
-    // trae la Caja se CALCULA en el frontend, nunca se teclea directo (ver
-    // handleAddProduct) — así se define la conversión completa Caja→Packs→
-    // Unidades en vez de un solo multiplicador que obligaba a hacer la
-    // cuenta a mano.
-    whPackName: "Caja", whPacksPerBox: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
+    // — solo Inventario — "price"/"packQty"/"barcode" YA NO son campos
+    // sueltos: se derivan de `presentations` justo antes de guardar (ver
+    // handleAddProduct + deriveLegacyFieldsFromPresentations en
+    // packaging.js), para no romper el resto de la app mientras no se migra
+    // a leer `presentations` directamente.
+    cost: "", stock: "", minStock: "4",
+    presentations: buildDefaultPresentations(), // [Unidad ×1, Pack ×6] obligatorias
+    // — solo Almacén — jerarquía de 3 niveles Caja → Packs → Unidades:
+    // whPacksPerCase (packs que trae la caja) × whUnitsPerPack (unidades que
+    // trae cada pack) reemplaza al viejo multiplicador único whPackQty — el
+    // total (unidades por caja) se sigue mandando al backend como "packQty"
+    // (ver calcUnitsPerCase en handleAddProduct), que es la única cifra que
+    // el resto del sistema (RPCs de almacén) necesita.
+    whPackName: "Caja", whPacksPerCase: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
   });
   const [saving,      setSaving]      = useState(false);
   const [saveError,   setSaveError]   = useState("");
@@ -218,11 +243,23 @@ const InventoryModule = ({
       }
       usedInBatch.add(sku.toLowerCase());
 
-      const packQty  = Number(raw["Unidades por Empaque"]) || 0;
+      const packQty     = Number(raw["Unidades por Empaque"]) || 0;
+      const packName    = String(raw["Nombre del Empaque"] ?? "").trim() || "Pack";
+      const packPrice   = Number(raw["Precio del Empaque"]) || 0;
+      const packBarcode = String(raw["Código de Barras del Empaque"] ?? "").trim();
       const stock    = Number(raw["Stock Inicial"]) || 0;
       const minStock = Number(raw["Stock Mínimo"]) || 4;
       const cost     = Number(raw["Costo"]) || 0;
       const barcode  = String(raw["Código de Barras"] ?? "").trim() || generateBarcode();
+
+      // Si trae "Unidades por Empaque", se arma la presentación de Pack —
+      // con SU PROPIO precio si vino en el Excel (para un descuento por
+      // volumen real), o al precio unitario × esas unidades si no (mismo
+      // resultado que el comportamiento de siempre, sin descuento propio).
+      const presentations = packQty > 0 ? [
+        { id: makePresentationId(), name: "Unidad", multiplier: 1, price, barcode },
+        { id: makePresentationId(), name: packName, multiplier: packQty, price: packPrice > 0 ? packPrice : price * packQty, barcode: packBarcode || generateBarcode() },
+      ] : [];
 
       return {
         ok: true,
@@ -233,7 +270,7 @@ const InventoryModule = ({
           category:    String(raw["Categoría"] ?? "").trim(),
           price, cost, stock, minStock,
           packQty: packQty || null,
-          barcode,
+          barcode, presentations,
         },
       };
     });
@@ -274,13 +311,19 @@ const InventoryModule = ({
       const label = name || "(sin nombre)";
       let sku = String(raw["SKU / Código"] ?? "").trim();
       const packName = String(raw["Nombre de Unidad de Empaque"] ?? "").trim() || "Caja";
-      const packQty = Number(raw["Unidades por Empaque"]);
+      // "Packs por Caja" + "Unidades por Pack" (si vienen ambas) calculan
+      // el total y quedan guardadas como desglose; si no, se usa
+      // "Unidades por Empaque" directo — mismo criterio que el alta manual
+      // en Almacén → Mis Productos (ver ProductosTab.jsx).
+      const packsPerCase = Number(raw["Packs por Caja"]) || 0;
+      const unitsPerPack = Number(raw["Unidades por Pack"]) || 0;
+      const packQty = (packsPerCase > 0 && unitsPerPack > 0) ? calcUnitsPerCase(packsPerCase, unitsPerPack) : (Number(raw["Unidades por Empaque"]) || 0);
       const unitPrice = Number(raw["Precio de cada Empaque"]) || 0;
       const packCount = Number(raw["Cantidad de Empaques"]) || 0;
       const locationRaw = String(raw["Ubicación"] ?? "").trim();
 
       if (!name) return { ok: false, label, error: "Falta el nombre del producto." };
-      if (!packQty || packQty <= 0) return { ok: false, label, error: 'La columna "Unidades por Empaque" es obligatoria y debe ser mayor a 0.' };
+      if (!packQty || packQty <= 0) return { ok: false, label, error: 'Indica "Unidades por Empaque", o "Packs por Caja" + "Unidades por Pack".' };
       if (!locationRaw) return { ok: false, label, error: 'La columna "Ubicación" es obligatoria.' };
       const loc = locByName[locationRaw.toLowerCase()];
       if (!loc) return { ok: false, label, error: `No existe ninguna ubicación de almacén llamada "${locationRaw}". Créala primero en Almacén → Mapa.` };
@@ -302,6 +345,7 @@ const InventoryModule = ({
         label: `${name} (SKU ${sku})`,
         values: {
           name, sku, packName, packQty, unitPrice, packCount,
+          packsPerCase: packsPerCase || null, unitsPerPack: unitsPerPack || null,
           description: String(raw["Descripción"] ?? "").trim(),
           locationId: loc.id, locationName: loc.name,
         },
@@ -312,10 +356,11 @@ const InventoryModule = ({
   // Mismo criterio que Inventario: con costo → "Compra" auditada (cuenta
   // como Egreso); sin costo → "Ajuste +" (entrada de stock sin monto).
   async function importWarehouseRow(values) {
-    const { packCount, unitPrice, locationId, locationName, ...rest } = values;
+    const { packCount, unitPrice, locationId, locationName, packsPerCase, unitsPerPack, ...rest } = values;
     const newProductId = await addWarehouseProduct(companyId, {
       name: rest.name, sku: rest.sku, description: rest.description,
       packName: rest.packName, packQty: rest.packQty, unitPrice: unitPrice || null,
+      packsPerCase, unitsPerPack,
     });
     if (packCount > 0 && unitPrice > 0) {
       await recordWarehousePurchase(companyId, {
@@ -349,20 +394,18 @@ const InventoryModule = ({
       name: p.name || "",
       sku: p.sku || "",
       description: p.description || "",
-      price: p.price ?? "",
       cost: p.cost ?? "",
       stock: p.stock ?? "",
       minStock: p.minStock ?? 4,
-      packQty: p.packQty ?? "",
-      barcode: p.barcode || "",
+      presentations: toEditablePresentations(p),
     });
     setEditProd(p);
     setEditError("");
   };
 
   const handleAdjust = async () => {
-    const hasPacking = Number(selectedProduct?.packQty) > 0;
-    const qty = hasPacking ? Number(adjustQty) * Number(selectedProduct.packQty) : Number(adjustQty);
+    const multiplier = Number(adjustPresentation?.multiplier) || 1;
+    const qty = Number(adjustQty) * multiplier;
     if (!adjustQty || qty <= 0) return;
     setAdjusting(true); setAdjustError("");
     try {
@@ -375,14 +418,20 @@ const InventoryModule = ({
   };
 
   // Recibe el código detectado por la cámara (BarcodeScanner) y lo mete en
-  // el campo "barcode" del formulario que estaba abierto cuando se apretó
-  // "Escanear" — "new" (Nuevo Producto, código de la Unidad), "newPack"
-  // (Nuevo Producto, código exterior de la presentación Pack) o "edit"
-  // (Editar Producto).
+  // el campo de código de barras correspondiente. scannerTarget es:
+  //   { form: "new"|"edit", index: i } → el código de barras de la
+  //                                       presentación #i del formulario
+  //                                       correspondiente (Unidad, Pack,
+  //                                       Caja... cada una tiene el suyo).
   const handleBarcodeScan = (code) => {
-    if (scannerTarget === "new") setNewProd(p => ({ ...p, barcode: code }));
-    else if (scannerTarget === "newPack") setNewProd(p => ({ ...p, presPackBarcode: code }));
-    else if (scannerTarget === "edit") setEditForm(p => ({ ...p, barcode: code }));
+    if (scannerTarget && typeof scannerTarget === "object") {
+      const { form, index } = scannerTarget;
+      const setter = form === "edit" ? setEditForm : setNewProd;
+      setter(p => ({
+        ...p,
+        presentations: p.presentations.map((pres, i) => (i === index ? { ...pres, barcode: code } : pres)),
+      }));
+    }
     setScannerTarget(null);
   };
 
@@ -390,31 +439,34 @@ const InventoryModule = ({
     if (!newProd.name) return;
     if (newProd.destino === "almacen") {
       // ── Producto nuevo → SOLO Almacén (catálogo independiente) ────────
+      // Jerarquía de 3 niveles: Caja → Packs → Unidades. El Dueño indica
+      // cuántos Packs trae la Caja y cuántas Unidades trae cada Pack; el
+      // total de unidades por caja (lo único que el resto del sistema
+      // necesita, en pack_qty) se calcula acá — ver calcUnitsPerCase en
+      // packaging.js.
       if (!canManageWarehouse) { setSaveError("No tienes permiso para gestionar Almacén."); return; }
       if (!newProd.whLocationId) { setSaveError("Selecciona la ubicación de almacén."); return; }
-      if (!newProd.whPackName.trim()) { setSaveError('Indica el nombre de la unidad de empaque mayorista (ej: "Caja").'); return; }
-      if (!newProd.whPacksPerBox || Number(newProd.whPacksPerBox) <= 0) { setSaveError("Indica cuántos packs trae la caja."); return; }
-      if (!newProd.whUnitsPerPack || Number(newProd.whUnitsPerPack) <= 0) { setSaveError("Indica cuántas unidades trae cada pack."); return; }
-      if (!newProd.whPackCount || Number(newProd.whPackCount) <= 0) { setSaveError("Indica la cantidad de cajas (stock inicial)."); return; }
+      if (!newProd.whPackName.trim()) { setSaveError('Indica el nombre de la unidad de empaque (ej: "Caja").'); return; }
+      if (!newProd.whPacksPerCase || Number(newProd.whPacksPerCase) <= 0) { setSaveError("Indica cuántos Packs trae la Caja."); return; }
+      if (!newProd.whUnitsPerPack || Number(newProd.whUnitsPerPack) <= 0) { setSaveError("Indica cuántas Unidades trae cada Pack."); return; }
+      if (!newProd.whPackCount || Number(newProd.whPackCount) <= 0) { setSaveError("Indica la cantidad de empaques (stock inicial)."); return; }
       setSaving(true); setSaveError("");
       try {
+        const packsPerCase = Number(newProd.whPacksPerCase);
+        const unitsPerPack = Number(newProd.whUnitsPerPack);
+        const totalUnidadesPorCaja = calcUnitsPerCase(packsPerCase, unitsPerPack);
         const loc = locations.find(l => l.id === newProd.whLocationId);
-        // Jerarquía de 3 niveles Caja → Packs → Unidades: el usuario ya no
-        // teclea directo el total de unidades por caja (eso invitaba a
-        // errores de cálculo mental) — lo definimos como los dos factores
-        // reales de la conversión y el FRONTEND multiplica una sola vez
-        // acá. `total_unidades_por_caja` sigue viajando al backend como
-        // el mismo `packQty` de siempre (addWarehouseProduct/
-        // addWarehouseMovement no cambian de forma — para ellos una Caja
-        // sigue siendo "un empaque de N unidades base", sin que les
-        // importe cómo se llegó a ese N).
-        const totalUnidadesPorCaja = Number(newProd.whPacksPerBox) * Number(newProd.whUnitsPerPack);
         const newWhProductId = await addWarehouseProduct(companyId, {
           name: newProd.name,
           sku: newProd.sku || nextWhSku,
           description: newProd.description || "",
           packName: newProd.whPackName.trim(),
           packQty: totalUnidadesPorCaja,
+          // Desglose informativo — packQty (arriba) sigue siendo la única
+          // cifra que usan las RPCs de almacén; esto es solo para poder
+          // mostrar/editar "10 packs de 6 und" más adelante sin perder el
+          // dato (ver 0019_product_presentations_and_case_breakdown.sql).
+          packsPerCase, unitsPerPack,
           unitPrice: newProd.whUnitPrice ? Number(newProd.whUnitPrice) : null,
         });
         await addWarehouseMovement(companyId, {
@@ -429,7 +481,7 @@ const InventoryModule = ({
         setShowNewProd(false);
         setNewProd(p => ({
           ...p, name: "", sku: nextWhSku, description: "",
-          whPackName: "Caja", whPacksPerBox: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
+          whPackName: "Caja", whPacksPerCase: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
         }));
       } catch (err) {
         setSaveError(logAndGetErrorMessage(err, "Error al crear producto de almacén:"));
@@ -440,19 +492,15 @@ const InventoryModule = ({
 
     // ── Producto nuevo → SOLO Inventario (tienda) ───────────────────────
     if (!newProd.sku) return;
-    // Jerarquía Caja→Packs→Unidades, lado venta: la presentación "Unidad"
-    // (factor 1) se crea siempre más abajo; si el producto también se
-    // vende en Packs, ambos campos son obligatorios ANTES de tocar la
-    // base de datos — no tiene sentido crear el producto y dejar el pack
-    // a medias si falta el factor o el precio.
-    if (newProd.hasPresPack) {
-      if (!newProd.presPackName.trim()) { setSaveError('Indica el nombre de la presentación "Pack".'); return; }
-      if (!newProd.presPackFactor || Number(newProd.presPackFactor) <= 1) { setSaveError('El multiplicador de stock del Pack debe ser mayor a 1 (ej: "Pack x6" = 6).'); return; }
-      if (newProd.presPackPrice === "" || Number(newProd.presPackPrice) < 0) { setSaveError("Indica el precio de venta del Pack."); return; }
-    }
+    // El stock siempre se guarda y se calcula en base a la unidad mínima
+    // (multiplicador 1 = "Unidad") — nunca en unidades de una presentación
+    // de empaque, sin importar cuántas presentaciones tenga el producto.
+    const presentationsCheck = validatePresentations(newProd.presentations);
+    if (!presentationsCheck.ok) { setSaveError(presentationsCheck.error); return; }
     setSaving(true); setSaveError("");
     try {
-      const packQty  = Number(newProd.packQty) || 0;
+      const { price, barcode, packQty: derivedPackQty } = deriveLegacyFieldsFromPresentations(newProd.presentations);
+      const packQty  = derivedPackQty || 0;
       const stock    = packQty > 0 ? (Number(newProd.stock) || 0) * packQty : (Number(newProd.stock) || 0);
       const minStock = Number(newProd.minStock) || 0;
       const cost     = Number(newProd.cost) || 0;
@@ -468,51 +516,27 @@ const InventoryModule = ({
       // aparte — como una "Compra" auditada (si tiene costo, para que sí
       // cuente como egreso real) o como un "Ajuste +" (si no tiene costo,
       // ej. una donación o un conteo inicial sin costo conocido).
+      // Códigos de barras vacíos se autogeneran — uno por presentación que
+      // lo necesite, nunca el mismo código repetido en dos presentaciones.
+      const presentationsToSave = newProd.presentations.map(p => ({
+        id: p.id, name: String(p.name).trim(), multiplier: Number(p.multiplier),
+        price: Number(p.price), barcode: String(p.barcode || "").trim() || generateBarcode(),
+      }));
+      const basePresentation = presentationsToSave.find(p => p.multiplier === 1);
+
       const newProductId = await addProduct(companyId, {
         name: newProd.name,
         sku,
         description,
-        price: Number(newProd.price) || 0,
+        price: price || 0,
         cost,
         stock: 0,
         minStock,
         packQty: packQty || null,
-        barcode: newProd.barcode || generateBarcode(),
+        barcode: barcode || basePresentation?.barcode || generateBarcode(),
+        presentations: presentationsToSave,
         status: "Agotado",
-        unitType: newProd.unitType,
-        baseUnitLabel: newProd.unitType === "peso" ? "kg" : "un",
       });
-
-      // Presentación base automática (nivel 1 de la jerarquía: la Unidad
-      // suelta, factor 1) — así el producto ya aparece listo para vender
-      // en el POS sin que el admin tenga que acordarse de crearla a mano
-      // (ver PresentationsManager.jsx para agregar más: packs, cajas,
-      // sacos, etc. después de creado el producto).
-      await addPresentation(companyId, newProductId, {
-        name: newProd.unitType === "peso" ? "Kilogramo" : "Unidad",
-        factor: 1,
-        price: Number(newProd.price) || 0,
-        isDefaultSale: true,
-        isPurchaseOnly: false,
-      });
-
-      // Presentación "Pack" (nivel 2 de la jerarquía Caja→Packs→Unidades)
-      // — opcional, solo si el admin marcó "también se vende por Pack".
-      // Mismo `factor` que ya usa el resto del sistema de presentaciones
-      // (ver 0019_kits_bulk_presentations.sql): "¿a cuántas unidades BASE
-      // equivale UNA de esta presentación?" — record_sale_v2 y el POS no
-      // necesitan saber nada especial de esta jerarquía, la tratan como
-      // cualquier otra presentación con su propio factor y precio.
-      if (newProd.hasPresPack) {
-        await addPresentation(companyId, newProductId, {
-          name: newProd.presPackName.trim(),
-          factor: Number(newProd.presPackFactor),
-          price: Number(newProd.presPackPrice) || 0,
-          barcode: newProd.presPackBarcode.trim() || null,
-          isDefaultSale: false,
-          isPurchaseOnly: false,
-        });
-      }
 
       if (stock > 0 && cost > 0) {
         await recordPurchase(companyId, {
@@ -527,10 +551,7 @@ const InventoryModule = ({
       }
 
       setShowNewProd(false);
-      setNewProd(p => ({
-        ...p, name: "", sku: nextSku, description: "", price: "", cost: "", stock: "", minStock: "4", packQty: "", barcode: "",
-        hasPresPack: false, presPackName: "Pack", presPackFactor: "6", presPackPrice: "", presPackBarcode: "",
-      }));
+      setNewProd(p => ({ ...p, name: "", sku: nextSku, description: "", cost: "", stock: "", minStock: "4", presentations: buildDefaultPresentations() }));
     } catch (err) {
       setSaveError(logAndGetErrorMessage(err, "Error al crear producto:"));
     }
@@ -539,9 +560,11 @@ const InventoryModule = ({
 
   const handleEditSave = async () => {
     if (!editProd || !editForm.name || !editForm.sku) return;
+    const presentationsCheck = validatePresentations(editForm.presentations);
+    if (!presentationsCheck.ok) { setEditError(presentationsCheck.error); return; }
     setEditSaving(true); setEditError("");
     try {
-      const price = parseFloat(editForm.price);
+      const { price, barcode, packQty } = deriveLegacyFieldsFromPresentations(editForm.presentations);
       const cost = parseFloat(editForm.cost);
       const stock = parseInt(editForm.stock, 10);
       const minStock = parseInt(editForm.minStock, 10);
@@ -561,15 +584,21 @@ const InventoryModule = ({
       // queda registrada igual.
       const statusBeforeStockChange = editProd.stock === 0 ? "Agotado" : editProd.stock <= finalMinStock ? "Stock Bajo" : "En Stock";
 
+      const presentationsToSave = editForm.presentations.map(p => ({
+        id: p.id, name: String(p.name).trim(), multiplier: Number(p.multiplier),
+        price: Number(p.price), barcode: String(p.barcode || "").trim() || generateBarcode(),
+      }));
+
       await updateProduct(companyId, editProd.id, {
         name: editForm.name,
         sku: editForm.sku,
         description: editForm.description || "",
-        price: !isNaN(price) ? price : editProd.price,
+        price: price || 0,
         cost: !isNaN(cost) ? cost : editProd.cost,
         minStock: finalMinStock,
-        packQty: editForm.packQty ? Number(editForm.packQty) : null,
-        barcode: editForm.barcode || editProd.barcode || generateBarcode(),
+        packQty: packQty || null,
+        barcode: barcode || editProd.barcode || generateBarcode(),
+        presentations: presentationsToSave,
         status: statusBeforeStockChange,
       });
 
@@ -747,8 +776,6 @@ const InventoryModule = ({
                   { label: "Stock Mínimo",  value: selectedProduct.minStock,                     mono: true,  color: "text-slate-300" },
                   { label: "Costo de Venta", value: `${formatMoney(selectedProduct.price, currencySymbol)}`, mono: true, color: "text-slate-300" },
                   ...(canViewFinance ? [{ label: "Costo de Compra", value: `${formatMoney(selectedProduct.cost, currencySymbol)}`, mono: true, color: "text-slate-300" }] : []),
-                  { label: "Unid. por Empaque", value: selectedProduct.packQty || "—",            mono: true, color: "text-slate-300" },
-                  ...(selectedProduct.packQty > 0 ? [{ label: "Empaques Disponibles", value: `≈ ${Math.floor(selectedProduct.stock / selectedProduct.packQty)}`, mono: true, color: "text-amber-400" }] : []),
                 ].map((item, i) => (
                   <div key={i} className="bg-slate-800/60 rounded-lg p-3 border border-slate-700/50">
                     <p className="text-xs text-slate-400 mb-1">{item.label}</p>
@@ -756,13 +783,33 @@ const InventoryModule = ({
                   </div>
                 ))}
               </div>
-              <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50"><StatusBadge status={selectedProduct.status} /></div>
 
-              {/* Presentaciones de venta (kits/packs/granel) */}
-              <PresentationsManager
-                companyId={companyId} product={selectedProduct} presentations={presentations}
-                canEdit={canEdit} canDelete={canDelete} currencySymbol={currencySymbol}
-              />
+              {/* Presentaciones de venta */}
+              {(() => {
+                const presentations = getSellablePresentations(selectedProduct);
+                if (presentations.length <= 1) return null;
+                return (
+                  <div>
+                    <p className="text-xs text-slate-400 uppercase tracking-wider mb-2">Presentaciones de venta</p>
+                    <div className="space-y-1.5">
+                      {presentations.map(pres => (
+                        <div key={pres.id} className="flex items-center justify-between bg-slate-800/60 rounded-lg p-2.5 border border-slate-700/50">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-200">{pres.name}</p>
+                            <p className="text-[11px] text-slate-500 font-mono">{pres.multiplier} und/{pres.name.toLowerCase()} {pres.barcode ? `· ${pres.barcode}` : ""}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-sm font-bold font-mono text-amber-400">{formatMoney(pres.price, currencySymbol)}</p>
+                            <p className="text-[10px] text-slate-500 font-mono">≈ {Math.floor((selectedProduct.stock || 0) / (Number(pres.multiplier) || 1))} disp.</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50"><StatusBadge status={selectedProduct.status} /></div>
 
               {/* Ajustar Stock */}
               {canEdit && (
@@ -776,20 +823,37 @@ const InventoryModule = ({
                       </button>
                     ))}
                   </div>
-                  {Number(selectedProduct.packQty) > 0 && (
-                    <p className="text-[11px] text-amber-400/80 mb-2">📦 Este producto viene en empaques de {selectedProduct.packQty} und. Ingresa cuántos empaques, y el stock se despacha automáticamente en unidades.</p>
+                  {adjustPresentations.length > 1 && (
+                    <div className="mb-3">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Contar en</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {adjustPresentations.map(pres => (
+                          <button key={pres.id} type="button" onClick={() => setAdjustPresentationId(pres.id)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                              adjustPresentation?.id === pres.id
+                                ? "bg-amber-500 border-amber-500 text-slate-900"
+                                : "bg-slate-700/60 border-slate-600 text-slate-300 hover:border-slate-500"
+                            }`}>
+                            {pres.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Number(adjustPresentation?.multiplier) > 1 && (
+                    <p className="text-[11px] text-amber-400/80 mb-2">📦 Ingresa cuántos "{adjustPresentation.name}" ({adjustPresentation.multiplier} und c/u); el stock se despacha automáticamente en unidades.</p>
                   )}
                   <div className="flex gap-2">
                     <input type="number" value={adjustQty} onChange={e => setAdjustQty(e.target.value)} min="0"
-                      placeholder={Number(selectedProduct.packQty) > 0 ? "Cantidad de empaques" : "Cantidad"}
+                      placeholder={Number(adjustPresentation?.multiplier) > 1 ? `Cantidad de "${adjustPresentation.name}"` : "Cantidad (unidades)"}
                       className="flex-1 px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                     <button onClick={handleAdjust} disabled={adjusting}
                       className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 text-slate-900 font-semibold text-sm rounded-lg transition-colors flex items-center gap-1">
                       {adjusting && <Loader2 size={13} className="animate-spin" />}Aplicar
                     </button>
                   </div>
-                  {Number(selectedProduct.packQty) > 0 && Number(adjustQty) > 0 && (
-                    <p className="text-[11px] text-slate-500 mt-1.5">= {Number(adjustQty) * Number(selectedProduct.packQty)} unidades en total</p>
+                  {Number(adjustPresentation?.multiplier) > 1 && Number(adjustQty) > 0 && (
+                    <p className="text-[11px] text-slate-500 mt-1.5">= {Number(adjustQty) * Number(adjustPresentation.multiplier)} unidades en total</p>
                   )}
                   {adjustError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-2">{adjustError}</p>}
                 </div>
@@ -887,29 +951,10 @@ const InventoryModule = ({
                         <input type="text" value={newProd.name} onChange={e => setNewProd(p => ({ ...p, name: e.target.value }))} placeholder="Ej: Galleta de chocolate 100g"
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
-                      <div>
+                      <div className="col-span-2">
                         <label className="text-xs text-slate-400 mb-1 block">Código * <span className="text-slate-500 normal-case font-normal">(autogenerado, editable)</span></label>
                         <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: EL-001"
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400 mb-1 block">Unidades por Empaque</label>
-                        <input type="number" min="1" value={newProd.packQty} onChange={e => setNewProd(p => ({ ...p, packQty: e.target.value }))} placeholder="Ej: 12"
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400 mb-1 block">Se vende por</label>
-                        <div className="flex gap-1.5">
-                          {[{ v: "unidad", l: "Unidad" }, { v: "peso", l: "Peso (kg)" }].map(o => (
-                            <button key={o.v} type="button" onClick={() => setNewProd(p => ({ ...p, unitType: o.v }))}
-                              className={`flex-1 py-2 text-xs rounded-lg border transition-colors ${newProd.unitType === o.v ? "bg-amber-500/20 border-amber-500/50 text-amber-400" : "border-slate-700 text-slate-400 hover:border-slate-600"}`}>
-                              {o.l}
-                            </button>
-                          ))}
-                        </div>
-                        {newProd.unitType === "peso" && (
-                          <p className="text-[10px] text-slate-500 mt-1">El stock se maneja en KG con hasta 3 decimales (ej: 0.650 kg).</p>
-                        )}
                       </div>
                       <div className="col-span-2">
                         <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
@@ -920,29 +965,39 @@ const InventoryModule = ({
                     </div>
                   </div>
 
-                  {/* Precios — sección destacada */}
-                  {canViewFinance && (
-                    <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wider">Precios</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
-                          <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente</p>
-                          <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
-                            className="w-full px-3 py-2 bg-slate-900 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
-                        </div>
+                  {/* Presentaciones de venta — "Unidad" (base, multiplicador
+                      fijo en 1) y "Pack" son obligatorias: entre las dos
+                      cubren el caso de negocio "vender suelto o en pack".
+                      Se puede agregar más presentaciones encima (ej. "Caja")
+                      con el botón de abajo — todas descuentan del MISMO
+                      stock base en unidades (ver validatePresentations /
+                      deriveLegacyFieldsFromPresentations en packaging.js). */}
+                  <PresentationsEditor
+                    presentations={newProd.presentations}
+                    onChange={(presentations) => setNewProd(p => ({ ...p, presentations }))}
+                    currencySymbol={currencySymbol}
+                    onScanRequest={(index) => setScannerTarget({ form: "new", index })}
+                    cost={canViewFinance ? Number(newProd.cost) || 0 : undefined}
+                  />
+
+                  {/* Costo — solo quien ve finanzas; el precio de venta ya
+                      se definió arriba, por presentación. */}
+                  {canViewFinance && (() => {
+                    const basePrice = Number(newProd.presentations.find(p => p.isBase)?.price) || 0;
+                    const cost = Number(newProd.cost) || 0;
+                    const profit = basePrice > 0 && cost > 0 ? calcProfit(basePrice, cost) : 0;
+                    const margin = basePrice > 0 && cost > 0 ? calcMarginPercent(basePrice, cost) : 0;
+                    return (
+                      <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Costo</p>
                         <div>
                           <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
-                          <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor</p>
+                          <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor, por unidad</p>
                           <input type="number" min="0" step="0.01" value={newProd.cost} onChange={e => setNewProd(p => ({ ...p, cost: e.target.value }))} placeholder="0.00"
                             className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 transition-colors" />
                         </div>
-                      </div>
-                      {/* Margen calculado en tiempo real (ver src/utils/finance.js) */}
-                      {newProd.price > 0 && newProd.cost > 0 && (() => {
-                        const profit = calcProfit(newProd.price, newProd.cost);
-                        const margin = calcMarginPercent(newProd.price, newProd.cost);
-                        return (
+                        {/* Margen calculado en tiempo real sobre el precio de "Unidad" (ver src/utils/finance.js) */}
+                        {basePrice > 0 && cost > 0 && (
                           <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
                             <span className="text-slate-400">Ganancia por unidad</span>
                             <div className="text-right">
@@ -950,141 +1005,46 @@ const InventoryModule = ({
                               <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>
                             </div>
                           </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-
-                  {/* Si no tiene finanzas, mostrar solo precio de venta */}
-                  {!canViewFinance && (
-                    <div>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Precio</p>
-                      <div>
-                        <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
-                        <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente por unidad</p>
-                        <input type="number" min="0" step="0.01" value={newProd.price} onChange={e => setNewProd(p => ({ ...p, price: e.target.value }))} placeholder="0.00"
-                          className="w-full px-3 py-2 bg-slate-800 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Stock */}
-                  <div>
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
-                    {Number(newProd.packQty) > 0 && (
-                      <p className="text-[11px] text-amber-400/80 mb-2">📦 Ingresa el stock inicial en cantidad de empaques ({newProd.packQty} und c/u); se convierte a unidades automáticamente.</p>
-                    )}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs text-slate-400 mb-1 block">{Number(newProd.packQty) > 0 ? "Stock inicial (empaques)" : "Stock inicial"}</label>
-                        <input type="number" min="0" value={newProd.stock} onChange={e => setNewProd(p => ({ ...p, stock: e.target.value }))} placeholder="0"
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                        {Number(newProd.packQty) > 0 && Number(newProd.stock) > 0 && (
-                          <p className="text-[10px] text-slate-500 mt-1">= {Number(newProd.stock) * Number(newProd.packQty)} unidades</p>
                         )}
                       </div>
+                    );
+                  })()}
+
+                  {/* Stock — siempre en la unidad mínima (multiplicador 1);
+                      si hay una presentación de empaque (ej. "Pack"), se
+                      puede seguir ingresando el stock inicial en esa unidad
+                      y se convierte a unidades automáticamente. */}
+                  {(() => {
+                    const packRows = newProd.presentations
+                      .filter(p => !p.isBase && Number(p.multiplier) > 0)
+                      .sort((a, b) => Number(a.multiplier) - Number(b.multiplier));
+                    const packForStock = packRows[0] || null;
+                    const packQtyForStock = packForStock ? Number(packForStock.multiplier) : 0;
+                    return (
                       <div>
-                        <label className="text-xs text-slate-400 mb-1 block">Stock mínimo</label>
-                        <p className="text-[10px] text-slate-500 mb-1">Alerta cuando baje de aquí</p>
-                        <input type="number" min="0" value={newProd.minStock} onChange={e => setNewProd(p => ({ ...p, minStock: e.target.value }))} placeholder="0"
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Código de barras */}
-                  <div>
-                    <label className="text-xs text-slate-400 uppercase tracking-wider mb-1 block flex items-center gap-1"><ScanBarcode size={11} />Código de Barras</label>
-                    <div className="flex gap-2">
-                      <input value={newProd.barcode} onChange={e => setNewProd(p => ({ ...p, barcode: e.target.value }))} placeholder="Se genera automáticamente"
-                        className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                      <button onClick={() => setScannerTarget("new")}
-                        className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap flex items-center gap-1">
-                        <ScanBarcode size={13} /> Escanear
-                      </button>
-                      <button onClick={() => setNewProd(p => ({ ...p, barcode: generateBarcode() }))}
-                        className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap">
-                        Generar
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Presentaciones de Venta — jerarquía Caja→Packs→Unidades,
-                      lado venta. La fila "Unidad" es siempre la base
-                      (factor 1, mismo precio/código de arriba) y se crea
-                      automáticamente al guardar — se muestra acá solo como
-                      referencia, ya está definida por los campos de arriba.
-                      La fila "Pack" es la segunda presentación vendible,
-                      opcional, con su propio multiplicador de stock, precio
-                      y código de barras exterior (el pack suele traer su
-                      propio EAN, distinto al de la unidad suelta). Para
-                      agregar más niveles (ej. una Caja vendible) o editarlos
-                      después, se usa PresentationsManager.jsx una vez creado
-                      el producto. */}
-                  <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wider">Presentaciones de Venta</p>
-
-                    <div className="flex items-center justify-between gap-2 bg-slate-900/40 rounded-lg p-2.5 border border-slate-700/50 opacity-80">
-                      <div className="min-w-0">
-                        <p className="text-sm text-white font-medium">{newProd.unitType === "peso" ? "Kilogramo" : "Unidad"}</p>
-                        <p className="text-[11px] text-slate-400 font-mono">
-                          1 = 1 {newProd.unitType === "peso" ? "kg" : "un"} base · {formatMoney(Number(newProd.price) || 0, currencySymbol)}
-                        </p>
-                      </div>
-                      <span className="text-[10px] text-slate-500 flex-shrink-0">Siempre incluida</span>
-                    </div>
-
-                    <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
-                      <input type="checkbox" checked={newProd.hasPresPack}
-                        onChange={e => setNewProd(p => ({ ...p, hasPresPack: e.target.checked }))}
-                        className="accent-amber-500" />
-                      Este producto también se vende por Pack
-                    </label>
-
-                    {newProd.hasPresPack && (
-                      <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700/50 space-y-2.5">
-                        <div>
-                          <label className="text-[11px] text-slate-400 mb-1 block">Nombre de la presentación</label>
-                          <input value={newProd.presPackName} onChange={e => setNewProd(p => ({ ...p, presPackName: e.target.value }))}
-                            placeholder='Ej: "Pack"'
-                            className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-[11px] text-slate-400 mb-1 block">Multiplicador de stock</label>
-                            <p className="text-[10px] text-slate-500 mb-1">Unidades base por Pack (ej: 6)</p>
-                            <input type="number" min="1" step="1" value={newProd.presPackFactor}
-                              onChange={e => setNewProd(p => ({ ...p, presPackFactor: e.target.value }))}
-                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white font-mono focus:outline-none focus:border-amber-500 transition-colors" />
-                          </div>
-                          <div>
-                            <label className="text-[11px] text-slate-400 mb-1 block">Precio de venta ({currencySymbol})</label>
-                            <input type="number" min="0" step="0.01" value={newProd.presPackPrice}
-                              onChange={e => setNewProd(p => ({ ...p, presPackPrice: e.target.value }))} placeholder="0.00"
-                              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-slate-400 mb-1 block">Código de barras exterior (opcional)</label>
-                          <p className="text-[10px] text-slate-500 mb-1">El código propio del pack — distinto al de la unidad suelta</p>
-                          <div className="flex gap-2">
-                            <input value={newProd.presPackBarcode} onChange={e => setNewProd(p => ({ ...p, presPackBarcode: e.target.value }))}
-                              placeholder="Opcional"
-                              className="flex-1 px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                            <button onClick={() => setScannerTarget("newPack")}
-                              className="px-3 py-2 bg-slate-600 hover:bg-slate-500 border border-slate-500 text-slate-200 text-xs rounded-lg transition-colors whitespace-nowrap flex items-center gap-1">
-                              <ScanBarcode size={13} /> Escanear
-                            </button>
-                          </div>
-                        </div>
-                        {newProd.presPackFactor > 0 && newProd.presPackPrice !== "" && (
-                          <p className="text-[10px] text-slate-500">
-                            1 {newProd.presPackName || "Pack"} = {newProd.presPackFactor} {newProd.unitType === "peso" ? "kg" : "un"} base · {formatMoney(Number(newProd.presPackPrice) || 0, currencySymbol)}
-                          </p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
+                        {packQtyForStock > 0 && (
+                          <p className="text-[11px] text-amber-400/80 mb-2">📦 Ingresa el stock inicial en cantidad de "{packForStock.name || "Pack"}" ({packQtyForStock} und c/u); se convierte a unidades automáticamente.</p>
                         )}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs text-slate-400 mb-1 block">{packQtyForStock > 0 ? `Stock inicial (${packForStock.name || "Pack"})` : "Stock inicial (unidades)"}</label>
+                            <input type="number" min="0" value={newProd.stock} onChange={e => setNewProd(p => ({ ...p, stock: e.target.value }))} placeholder="0"
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                            {packQtyForStock > 0 && Number(newProd.stock) > 0 && (
+                              <p className="text-[10px] text-slate-500 mt-1">= {Number(newProd.stock) * packQtyForStock} unidades</p>
+                            )}
+                          </div>
+                          <div>
+                            <label className="text-xs text-slate-400 mb-1 block">Stock mínimo</label>
+                            <p className="text-[10px] text-slate-500 mb-1">Alerta cuando baje de aquí</p>
+                            <input type="number" min="0" value={newProd.minStock} onChange={e => setNewProd(p => ({ ...p, minStock: e.target.value }))} placeholder="0"
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                          </div>
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    );
+                  })()}
                 </>
               ) : (
                 <>
@@ -1108,49 +1068,41 @@ const InventoryModule = ({
                         <input type="text" value={newProd.sku} onChange={e => setNewProd(p => ({ ...p, sku: e.target.value }))} placeholder="Ej: 001"
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
-                      <div>
-                        <label className="text-xs text-slate-400 mb-1 block">Nombre de la unidad mayorista *</label>
+                      <div className="col-span-2">
+                        <label className="text-xs text-slate-400 mb-1 block">Nombre de unidad mayorista *</label>
                         <input value={newProd.whPackName} onChange={e => setNewProd(p => ({ ...p, whPackName: e.target.value }))} placeholder="Ej: Caja"
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
+                      {/* Jerarquía de 3 niveles: Caja → Packs → Unidades. Se
+                          piden por separado (en vez de un solo multiplicador)
+                          para poder mostrar/editar el desglose real más
+                          adelante — el total (lo único que necesita el resto
+                          del sistema) se calcula acá mismo, en vivo. */}
                       <div>
-                        <label className="text-xs text-slate-400 mb-1 block">Cantidad de {newProd.whPackName.trim() || "cajas"} *</label>
+                        <label className="text-xs text-slate-400 mb-1 block">¿Cuántos Packs trae la {newProd.whPackName || "Caja"}? *</label>
+                        <input type="number" min="1" value={newProd.whPacksPerCase} onChange={e => setNewProd(p => ({ ...p, whPacksPerCase: e.target.value }))} placeholder="Ej: 10"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">¿Cuántas Unidades trae cada Pack? *</label>
+                        <input type="number" min="1" value={newProd.whUnitsPerPack} onChange={e => setNewProd(p => ({ ...p, whUnitsPerPack: e.target.value }))} placeholder="Ej: 6"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      {Number(newProd.whPacksPerCase) > 0 && Number(newProd.whUnitsPerPack) > 0 && (
+                        <div className="col-span-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
+                          📦 1 {newProd.whPackName || "Caja"} = {newProd.whPacksPerCase} packs × {newProd.whUnitsPerPack} und = <strong>{calcUnitsPerCase(newProd.whPacksPerCase, newProd.whUnitsPerPack)} unidades</strong>
+                        </div>
+                      )}
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Precio de cada {newProd.whPackName || "Caja"} ({currencySymbol})</label>
+                        <input type="number" min="0" step="0.01" value={newProd.whUnitPrice} onChange={e => setNewProd(p => ({ ...p, whUnitPrice: e.target.value }))} placeholder="0.00"
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Cantidad de {newProd.whPackName || "Caja"}s *</label>
                         <p className="text-[10px] text-slate-500 mb-1">Stock inicial</p>
                         <input type="number" min="1" value={newProd.whPackCount} onChange={e => setNewProd(p => ({ ...p, whPackCount: e.target.value }))} placeholder="Ej: 5"
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                      </div>
-
-                      {/* Conversión de 2 niveles: en vez de teclear directo
-                          "unidades por empaque" (invitaba a errores de
-                          cálculo mental cuando el empaque mayorista trae
-                          sub-empaques), se definen los dos factores reales
-                          de la cadena de abastecimiento y el total se
-                          calcula solo — ver handleAddProduct. */}
-                      <div className="col-span-2 bg-slate-900/40 border border-slate-700/50 rounded-lg p-3 space-y-2.5">
-                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Conversión — {newProd.whPackName.trim() || "Caja"} → Packs → Unidades</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-xs text-slate-400 mb-1 block">¿Cuántos packs trae {newProd.whPackName.trim() ? `la ${newProd.whPackName.trim().toLowerCase()}` : "la caja"}? *</label>
-                            <input type="number" min="1" value={newProd.whPacksPerBox} onChange={e => setNewProd(p => ({ ...p, whPacksPerBox: e.target.value }))} placeholder="Ej: 10"
-                              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                          </div>
-                          <div>
-                            <label className="text-xs text-slate-400 mb-1 block">¿Cuántas unidades trae cada pack? *</label>
-                            <input type="number" min="1" value={newProd.whUnitsPerPack} onChange={e => setNewProd(p => ({ ...p, whUnitsPerPack: e.target.value }))} placeholder="Ej: 6"
-                              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                          </div>
-                        </div>
-                        {Number(newProd.whPacksPerBox) > 0 && Number(newProd.whUnitsPerPack) > 0 && (
-                          <p className="text-[11px] text-amber-400/90">
-                            = {Number(newProd.whPacksPerBox) * Number(newProd.whUnitsPerPack)} unidades base por {newProd.whPackName.trim() || "Caja"}
-                          </p>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className="text-xs text-slate-400 mb-1 block">Precio de cada {newProd.whPackName.trim() || "Caja"} ({currencySymbol})</label>
-                        <input type="number" min="0" step="0.01" value={newProd.whUnitPrice} onChange={e => setNewProd(p => ({ ...p, whUnitPrice: e.target.value }))} placeholder="0.00"
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
                       <div className="col-span-2">
                         <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
@@ -1207,15 +1159,10 @@ const InventoryModule = ({
                     <input type="text" value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))}
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <label className="text-xs text-slate-400 mb-1 block">SKU *</label>
                     <input type="text" value={editForm.sku} onChange={e => setEditForm(p => ({ ...p, sku: e.target.value }))}
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Unidades por Empaque</label>
-                    <input type="number" min="1" value={editForm.packQty} onChange={e => setEditForm(p => ({ ...p, packQty: e.target.value }))} placeholder="Ej: 12"
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
                   <div className="col-span-2">
                     <label className="text-xs text-slate-400 mb-1 block">Descripción</label>
@@ -1226,28 +1173,34 @@ const InventoryModule = ({
                 </div>
               </div>
 
-              {/* Precios */}
-              {canViewFinance && (
-                <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">Precios</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
-                      <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente</p>
-                      <input type="number" min="0" step="0.01" value={editForm.price} onChange={e => setEditForm(p => ({ ...p, price: e.target.value }))}
-                        className="w-full px-3 py-2 bg-slate-900 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 transition-colors" />
-                    </div>
+              {/* Presentaciones de venta — mismo componente que "Nuevo
+                  Producto"; a diferencia de esa, acá SÍ se puede quitar la
+                  presentación de empaque si el producto dejó de venderse
+                  así (solo "Unidad", la base, queda protegida). */}
+              <PresentationsEditor
+                presentations={editForm.presentations || []}
+                onChange={(presentations) => setEditForm(p => ({ ...p, presentations }))}
+                currencySymbol={currencySymbol}
+                onScanRequest={(index) => setScannerTarget({ form: "edit", index })}
+                cost={canViewFinance ? Number(editForm.cost) || 0 : undefined}
+              />
+
+              {/* Costo — el precio de venta ya se define arriba, por presentación. */}
+              {canViewFinance && (() => {
+                const basePrice = Number((editForm.presentations || []).find(p => p.isBase)?.price) || 0;
+                const cost = Number(editForm.cost) || 0;
+                const profit = basePrice > 0 && cost > 0 ? calcProfit(basePrice, cost) : 0;
+                const margin = basePrice > 0 && cost > 0 ? calcMarginPercent(basePrice, cost) : 0;
+                return (
+                  <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider">Costo</p>
                     <div>
                       <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
-                      <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor</p>
+                      <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor, por unidad</p>
                       <input type="number" min="0" step="0.01" value={editForm.cost} onChange={e => setEditForm(p => ({ ...p, cost: e.target.value }))}
                         className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono focus:outline-none focus:border-sky-500 transition-colors" />
                     </div>
-                  </div>
-                  {editForm.price > 0 && editForm.cost > 0 && (() => {
-                    const profit = calcProfit(editForm.price, editForm.cost);
-                    const margin = calcMarginPercent(editForm.price, editForm.cost);
-                    return (
+                    {basePrice > 0 && cost > 0 && (
                       <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
                         <span className="text-slate-400">Ganancia por unidad</span>
                         <div className="text-right">
@@ -1255,26 +1208,17 @@ const InventoryModule = ({
                           <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>
                         </div>
                       </div>
-                    );
-                  })()}
-                </div>
-              )}
-
-              {!canViewFinance && (
-                <div>
-                  <label className="text-xs font-semibold text-emerald-400 mb-0.5 block">Costo de Venta ({currencySymbol})</label>
-                  <p className="text-[10px] text-slate-500 mb-1.5">Lo que cobra al cliente por unidad</p>
-                  <input type="number" min="0" step="0.01" value={editForm.price} onChange={e => setEditForm(p => ({ ...p, price: e.target.value }))}
-                    className="w-full px-3 py-2 bg-slate-800 border border-emerald-500/30 rounded-lg text-sm text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 transition-colors" />
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Stock */}
               <div>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Stock actual</label>
+                    <label className="text-xs text-slate-400 mb-1 block">Stock actual (unidades)</label>
                     <input type="number" min="0" value={editForm.stock} onChange={e => setEditForm(p => ({ ...p, stock: e.target.value }))}
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
                   </div>
@@ -1286,30 +1230,6 @@ const InventoryModule = ({
                   </div>
                 </div>
               </div>
-
-              {/* Código de barras */}
-              <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1 block flex items-center gap-1"><ScanBarcode size={11} />Código de Barras</label>
-                <div className="flex gap-2">
-                  <input value={editForm.barcode} onChange={e => setEditForm(p => ({ ...p, barcode: e.target.value }))}
-                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono focus:outline-none focus:border-amber-500 transition-colors" />
-                  <button onClick={() => setScannerTarget("edit")}
-                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors flex items-center gap-1">
-                    <ScanBarcode size={13} /> Escanear
-                  </button>
-                  <button onClick={() => setEditForm(p => ({ ...p, barcode: generateBarcode() }))}
-                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded-lg transition-colors">
-                    Generar
-                  </button>
-                </div>
-              </div>
-
-              {/* Vista previa código de barras */}
-              {editForm.barcode && (
-                <div className="mt-1">
-                  <BarcodeDisplay value={editForm.barcode} height={50} />
-                </div>
-              )}
 
               {editError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-3">{editError}</p>}
               <div className="flex gap-3 mt-5">

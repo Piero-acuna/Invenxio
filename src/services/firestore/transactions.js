@@ -86,9 +86,13 @@ export async function getDashboardTransactionsSummary(companyId) {
 }
 
 /**
- * Venta completa (carrito) como una sola llamada RPC atómica. El precio de
- * cada ítem lo recalcula el servidor a partir del producto real — nunca
- * confía en item.price del carrito (ver comentario en record_sale() SQL).
+ * Venta completa (carrito) como una sola llamada RPC atómica. Cada ítem
+ * puede traer `presentationId` (qué presentación se vendió — Unidad, Pack,
+ * "legacy_pack" para productos sin presentaciones propias, o ausente/null
+ * para venta simple por unidad) — el multiplicador de unidades a descontar
+ * y el precio cobrado los recalcula SIEMPRE el servidor contra
+ * products.presentations / pack_qty / price reales, nunca contra `qty` o
+ * cualquier precio que mande el carrito (ver record_sale() SQL).
  */
 export async function recordSale(companyId, { cartItems, userName, clientName = "Cliente", paymentMethod = "Efectivo" }) {
   const cart = cartItems.map((item) => ({
@@ -96,10 +100,7 @@ export async function recordSale(companyId, { cartItems, userName, clientName = 
     name: item.name,
     sku: item.sku,
     qty: item.qty,
-    packMode: item.packMode || false,
-    packQty: item.packQty || 0,
-    packName: item.packName || "",
-    baseUnitName: item.baseUnitName || "",
+    presentationId: item.presentationId || null,
   }));
 
   const { clientDate } = getLocalDateTimeParams();
