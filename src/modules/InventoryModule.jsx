@@ -149,7 +149,7 @@ const InventoryModule = ({
     // packaging.js), para no romper el resto de la app mientras no se migra
     // a leer `presentations` directamente.
     cost: "", stock: "", minStock: "4",
-    presentations: buildDefaultPresentations(), // [Unidad ×1, Pack ×6] obligatorias
+    presentations: buildDefaultPresentations(), // solo [Unidad ×1] — el resto se agrega a mano con "+ Agregar"
     // — solo Almacén — jerarquía de 3 niveles Caja → Packs → Unidades:
     // whPacksPerCase (packs que trae la caja) × whUnitsPerPack (unidades que
     // trae cada pack) reemplaza al viejo multiplicador único whPackQty — el
@@ -966,11 +966,11 @@ const InventoryModule = ({
                   </div>
 
                   {/* Presentaciones de venta — "Unidad" (base, multiplicador
-                      fijo en 1) y "Pack" son obligatorias: entre las dos
-                      cubren el caso de negocio "vender suelto o en pack".
-                      Se puede agregar más presentaciones encima (ej. "Caja")
-                      con el botón de abajo — todas descuentan del MISMO
-                      stock base en unidades (ver validatePresentations /
+                      fijo en 1) es la única obligatoria; el resto (ej.
+                      "Pack", "Caja") se agrega a mano con el botón "+
+                      Agregar" de abajo, solo si el producto realmente se
+                      vende así — todas descuentan del MISMO stock base en
+                      unidades (ver validatePresentations /
                       deriveLegacyFieldsFromPresentations en packaging.js). */}
                   <PresentationsEditor
                     presentations={newProd.presentations}

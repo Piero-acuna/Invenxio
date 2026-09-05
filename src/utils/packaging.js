@@ -53,11 +53,10 @@ export function makePresentationId() {
 }
 
 /**
- * Presentaciones por defecto para el formulario "Nuevo Producto": TODO
- * producto de Inventario arranca con estas dos, obligatorias — "Unidad"
- * (unidad mínima, multiplicador fijo en 1) y "Pack" (multiplicador
- * configurable, 6 por defecto). El usuario puede agregar más encima (ej.
- * "Caja"), pero estas dos no se pueden borrar — ver `locked` más abajo.
+ * Presentación por defecto para el formulario "Nuevo Producto": todo
+ * producto de Inventario arranca solo con "Unidad" (unidad mínima,
+ * multiplicador fijo en 1, no se puede borrar). El usuario agrega el resto
+ * (Pack, Caja, etc.) él mismo con "+ Agregar" — no vienen precargadas.
  */
 export function buildDefaultPresentations() {
   return [
@@ -65,7 +64,6 @@ export function buildDefaultPresentations() {
     // por este flag, no por el nombre, para que renombrar "Unidad" (ej. a
     // "Suelto") no le haga perder su rol de unidad base.
     { id: makePresentationId(), name: "Unidad", multiplier: 1, price: "", barcode: "", locked: true, isBase: true },
-    { id: makePresentationId(), name: "Pack",   multiplier: 6, price: "", barcode: "", locked: true, isBase: false },
   ];
 }
 
@@ -79,12 +77,13 @@ export function buildEmptyPresentation() {
  * Inventario. Devuelve { ok: true } o { ok: false, error }.
  *   - Debe haber EXACTAMENTE una presentación base (multiplicador === 1):
  *     la "Unidad" — es la que define qué es "1 unidad de stock".
- *   - El resto debe tener nombre, multiplicador > 1 y precio > 0.
+ *   - El resto (si el usuario agregó alguna) debe tener nombre,
+ *     multiplicador > 1 y precio > 0.
  *   - Ningún multiplicador ni código de barras puede repetirse.
  */
 export function validatePresentations(presentations) {
-  if (!Array.isArray(presentations) || presentations.length < 2) {
-    return { ok: false, error: 'Debes registrar al menos las presentaciones "Unidad" y "Pack".' };
+  if (!Array.isArray(presentations) || presentations.length < 1) {
+    return { ok: false, error: 'Debes registrar al menos la presentación "Unidad".' };
   }
 
   const baseRows = presentations.filter(p => Number(p.multiplier) === 1);
