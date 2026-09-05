@@ -12,11 +12,13 @@ import {
   Crown, Shield, RefreshCw, AlertCircle, CheckCircle, CheckCircle2, CreditCard,
   Power, PowerOff, ChevronDown, Settings2, Save, Receipt, Building2,
   Package, BarChart2, Warehouse, Truck, Sliders, Zap, Globe, Loader2,
+  ScanBarcode,
 } from "lucide-react";
 import { PERMISSION_GROUPS, defaultPermissions, getEffectivePermissions } from "../config/permissions";
 import { COUNTRIES, getCountryConfig } from "../config/countryConfig";
 import { logAndGetErrorMessage } from "../utils/errors";
 import PaywallScreen from "./PaywallScreen";
+import DeviceSettingsModal from "./DeviceSettingsModal";
 
 // Iconos por grupo de permisos (solo visual, permissions.js se queda sin JSX)
 const GROUP_ICONS = {
@@ -156,6 +158,7 @@ export default function RolePanel({
   const [open,     setOpen]     = useState(false);
   const [tab,      setTab]      = useState("perfil"); // "perfil" | "equipo"
   const [showForm, setShowForm] = useState(false);
+  const [showDevices, setShowDevices] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -202,6 +205,13 @@ export default function RolePanel({
                 <Receipt size={13} /> Facturación
               </button>
             )}
+            <button
+              onClick={() => { setShowDevices(true); setOpen(false); }}
+              title="Configurar lector de código de barras e impresora"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              <ScanBarcode size={13} /> Dispositivos
+            </button>
             <button onClick={() => setOpen(false)} className="px-3 text-slate-500 hover:text-slate-300"><X size={14} /></button>
           </div>
 
@@ -232,6 +242,8 @@ export default function RolePanel({
           </div>
         </div>
       )}
+
+      {showDevices && <DeviceSettingsModal onClose={() => setShowDevices(false)} />}
     </div>
   );
 }
