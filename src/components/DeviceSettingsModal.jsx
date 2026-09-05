@@ -81,9 +81,11 @@ function Toggle({ checked, onChange, label }) {
 }
 
 // ── Sección: Lector de Código de Barras ──────────────────────────────────────
-function ScannerSection({ value, onChange }) {
+function ScannerSection({ value, onChange, capabilities }) {
   const [testInput, setTestInput] = useState("");
   const [lastScan,  setLastScan]  = useState("");
+  const [pairing,   setPairing]   = useState(false);
+  const [pairError, setPairError] = useState("");
 
   // La mayoría de lectores HID escriben todo el código y luego un Enter, así
   // que basta con capturar el Enter para separar un código completo de texto
@@ -92,6 +94,41 @@ function ScannerSection({ value, onChange }) {
     if (e.key === "Enter" && testInput.trim()) {
       setLastScan(testInput.trim());
       setTestInput("");
+    }
+  }
+
+  async function handlePairUsb() {
+    setPairError("");
+    if (!capabilities.usb) {
+      setPairError("Este navegador no soporta WebUSB. Usa Chrome o Edge en una computadora de escritorio.");
+      return;
+    }
+    setPairing(true);
+    try {
+      const device = await navigator.usb.requestDevice({ filters: [] });
+      onChange({ ...value, label: device.productName || `Dispositivo USB ${device.vendorId}:${device.productId}` });
+    } catch (err) {
+      // El usuario cerró el selector, o no hay dispositivos — no es un error real de la app.
+      if (err?.name !== "NotFoundError") setPairError("No se pudo emparejar el dispositivo.");
+    } finally {
+      setPairing(false);
+    }
+  }
+
+  async function handlePairBluetooth() {
+    setPairError("");
+    if (!capabilities.bluetooth) {
+      setPairError("Este navegador no soporta Web Bluetooth. Usa Chrome o Edge en Android o escritorio.");
+      return;
+    }
+    setPairing(true);
+    try {
+      const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+      onChange({ ...value, label: device.name || "Lector Bluetooth" });
+    } catch (err) {
+      if (err?.name !== "NotFoundError") setPairError("No se pudo emparejar el dispositivo.");
+    } finally {
+      setPairing(false);
     }
   }
 
@@ -121,22 +158,56 @@ function ScannerSection({ value, onChange }) {
 
           <div>
             <p className="text-xs font-semibold text-slate-400 mb-1.5">Conexión</p>
-            <SegmentedControl options={CONNECTIONS} value={value.connection} onChange={c => onChange({ ...value, connection: c })} />
+            <SegmentedControl options={CONNECTIONS} value={value.connection} onChange={c => { setPairError(""); onChange({ ...value, connection: c }); }} />
           </div>
+
+          {value.connection === "usb" && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handlePairUsb}
+                disabled={pairing}
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm font-semibold text-slate-200 transition-colors disabled:opacity-60"
+              >
+                {pairing ? <Loader2 size={14} className="animate-spin" /> : <Usb size={14} />}
+                {value.label ? "Cambiar lector emparejado" : "Emparejar lector por USB"}
+              </button>
+              <p className="text-[11px] text-slate-500">
+                Si tu lector es "plug and play" (funciona como teclado apenas lo conectas), no hace falta emparejarlo aquí:
+                solo haz clic en el cuadro de prueba de abajo y escanea.
+              </p>
+            </div>
+          )}
+
+          {value.connection === "bluetooth" && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handlePairBluetooth}
+                disabled={pairing}
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm font-semibold text-slate-200 transition-colors disabled:opacity-60"
+              >
+                {pairing ? <Loader2 size={14} className="animate-spin" /> : <Bluetooth size={14} />}
+                {value.label ? "Cambiar lector emparejado" : "Emparejar lector por Bluetooth"}
+              </button>
+              <p className="text-[11px] text-slate-500">
+                Si tu lector ya está emparejado desde el Bluetooth del sistema operativo (modo teclado inalámbrico),
+                no hace falta emparejarlo aquí: solo haz clic en el cuadro de prueba de abajo y escanea.
+              </p>
+            </div>
+          )}
 
           {(value.connection === "usb" || value.connection === "bluetooth") && (
             <div className="space-y-2">
-              <p className="text-[11px] text-slate-500">
-                {value.connection === "usb"
-                  ? "Conéctalo al puerto USB: la mayoría funciona como teclado, sin instalar nada más."
-                  : "Empareja el lector desde Bluetooth del sistema operativo — luego funciona como teclado inalámbrico."}
-              </p>
               <input
                 value={value.label}
                 onChange={e => onChange({ ...value, label: e.target.value })}
                 placeholder="Nombre del lector (opcional, ej. Honeywell 1900)"
                 className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500"
               />
+              {pairError && (
+                <p className="flex items-center gap-1.5 text-xs text-red-400"><AlertTriangle size={13} />{pairError}</p>
+              )}
               <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-3">
                 <p className="text-[11px] font-semibold text-slate-400 mb-1.5">Probar lector</p>
                 <input
@@ -174,6 +245,7 @@ function ScannerSection({ value, onChange }) {
       )}
     </div>
   );
+
 }
 
 // ── Sección: Impresora Térmica Directa ───────────────────────────────────────
@@ -357,6 +429,7 @@ export default function DeviceSettingsModal({ onClose }) {
           <ScannerSection
             value={settings.scanner}
             onChange={scanner => setSettings(s => ({ ...s, scanner }))}
+            capabilities={capabilities}
           />
           <div className="border-t border-slate-800" />
           <PrinterSection

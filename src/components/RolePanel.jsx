@@ -6,7 +6,8 @@
 //   • "Equipo"     → registrar empleados y editar sus PERMISOS GRANULARES
 //                    (solo el Dueño, ver canManage)
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   LayoutPanelLeft, X, UserPlus, Users, Mail, Lock, User as UserIcon,
   Crown, Shield, RefreshCw, AlertCircle, CheckCircle, CheckCircle2, CreditCard,
@@ -159,15 +160,6 @@ export default function RolePanel({
   const [tab,      setTab]      = useState("perfil"); // "perfil" | "equipo"
   const [showForm, setShowForm] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    function handleClick(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
 
   function toggle() {
     setOpen(o => !o);
@@ -176,7 +168,7 @@ export default function RolePanel({
   }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
         onClick={toggle}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
@@ -186,61 +178,72 @@ export default function RolePanel({
         <LayoutPanelLeft size={13} /> Panel
       </button>
 
-      {open && (
-        <div className="absolute left-0 sm:left-auto right-0 mt-2 w-[calc(100vw-1.5rem)] sm:w-[26rem] max-w-[26rem] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
-          <div className="flex border-b border-slate-800">
-            <button onClick={() => setTab("perfil")}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "perfil" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
-              <UserIcon size={13} /> Mis Datos
-            </button>
-            {canManage && (
-              <button onClick={() => setTab("equipo")}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "equipo" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
-                <Users size={13} /> Equipo
+      {/*
+        Portal a document.body: el header tiene backdrop-blur (backdrop-filter),
+        y esa propiedad crea un "containing block" nuevo para cualquier
+        descendiente con position:fixed — sin el portal, este modal quedaría
+        centrado respecto a la franja angosta del header en vez de toda la
+        pantalla (mismo bug que tenía el modal de Dispositivos).
+      */}
+      {open && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setOpen(false)} />
+          <div className="relative z-10 w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="flex border-b border-slate-800 flex-shrink-0">
+              <button onClick={() => setTab("perfil")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "perfil" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
+                <UserIcon size={13} /> Mis Datos
               </button>
-            )}
-            {userProfile?.role === "owner" && (
-              <button onClick={() => setTab("facturacion")}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "facturacion" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
-                <Receipt size={13} /> Facturación
+              {canManage && (
+                <button onClick={() => setTab("equipo")}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "equipo" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
+                  <Users size={13} /> Equipo
+                </button>
+              )}
+              {userProfile?.role === "owner" && (
+                <button onClick={() => setTab("facturacion")}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-colors ${tab === "facturacion" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500 hover:text-slate-300"}`}>
+                  <Receipt size={13} /> Facturación
+                </button>
+              )}
+              <button
+                onClick={() => { setShowDevices(true); setOpen(false); }}
+                title="Configurar lector de código de barras e impresora"
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                <ScanBarcode size={13} /> Dispositivos
               </button>
-            )}
-            <button
-              onClick={() => { setShowDevices(true); setOpen(false); }}
-              title="Configurar lector de código de barras e impresora"
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-300 transition-colors"
-            >
-              <ScanBarcode size={13} /> Dispositivos
-            </button>
-            <button onClick={() => setOpen(false)} className="px-3 text-slate-500 hover:text-slate-300"><X size={14} /></button>
-          </div>
+              <button onClick={() => setOpen(false)} className="px-3 text-slate-500 hover:text-slate-300"><X size={14} /></button>
+            </div>
 
-          <div className="p-4 max-h-[min(32rem,70vh)] overflow-y-auto">
-            {tab === "perfil" && (
-              <PerfilTab
-                userProfile={userProfile} companyName={companyName}
-                companyCurrency={companyCurrency} onChangeCountry={onChangeCountry}
-                subscription={subscription} isBlocked={isBlocked} trialDaysLeft={trialDaysLeft}
-                companyId={companyId} getIdToken={getIdToken}
-              />
-            )}
-            {tab === "equipo" && canManage && (
-              <EquipoTab
-                employees={employees}
-                loading={employeesLoading}
-                showForm={showForm}
-                setShowForm={setShowForm}
-                onRegisterEmployee={onRegisterEmployee}
-                onChangePermissions={onChangePermissions}
-                onToggleActive={onToggleActive}
-                currentUid={userProfile?.id}
-              />
-            )}
-            {tab === "facturacion" && userProfile?.role === "owner" && (
-              <BillingTab billing={billing} onSave={onSaveBilling} />
-            )}
+            <div className="p-4 overflow-y-auto">
+              {tab === "perfil" && (
+                <PerfilTab
+                  userProfile={userProfile} companyName={companyName}
+                  companyCurrency={companyCurrency} onChangeCountry={onChangeCountry}
+                  subscription={subscription} isBlocked={isBlocked} trialDaysLeft={trialDaysLeft}
+                  companyId={companyId} getIdToken={getIdToken}
+                />
+              )}
+              {tab === "equipo" && canManage && (
+                <EquipoTab
+                  employees={employees}
+                  loading={employeesLoading}
+                  showForm={showForm}
+                  setShowForm={setShowForm}
+                  onRegisterEmployee={onRegisterEmployee}
+                  onChangePermissions={onChangePermissions}
+                  onToggleActive={onToggleActive}
+                  currentUid={userProfile?.id}
+                />
+              )}
+              {tab === "facturacion" && userProfile?.role === "owner" && (
+                <BillingTab billing={billing} onSave={onSaveBilling} />
+              )}
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {showDevices && <DeviceSettingsModal onClose={() => setShowDevices(false)} />}
