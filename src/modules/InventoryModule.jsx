@@ -156,6 +156,12 @@ const InventoryModule = ({
     // total (unidades por caja) se sigue mandando al backend como "packQty"
     // (ver calcUnitsPerCase en handleAddProduct), que es la única cifra que
     // el resto del sistema (RPCs de almacén) necesita.
+    // whMode: algunas cajas no tienen packs intermedios (vienen con
+    // unidades sueltas directo) — "packs" pide los 2 niveles de siempre;
+    // "unidades" pide un solo número (unidades totales por caja) y fija
+    // whPacksPerCase=1 por dentro, sin tocar el resto del sistema (packQty
+    // = 1 × unidades = unidades, ver calcUnitsPerCase).
+    whMode: "packs", // "packs" | "unidades"
     whPackName: "Caja", whPacksPerCase: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
   });
   const [saving,      setSaving]      = useState(false);
@@ -447,12 +453,15 @@ const InventoryModule = ({
       if (!canManageWarehouse) { setSaveError("No tienes permiso para gestionar Almacén."); return; }
       if (!newProd.whLocationId) { setSaveError("Selecciona la ubicación de almacén."); return; }
       if (!newProd.whPackName.trim()) { setSaveError('Indica el nombre de la unidad de empaque (ej: "Caja").'); return; }
-      if (!newProd.whPacksPerCase || Number(newProd.whPacksPerCase) <= 0) { setSaveError("Indica cuántos Packs trae la Caja."); return; }
-      if (!newProd.whUnitsPerPack || Number(newProd.whUnitsPerPack) <= 0) { setSaveError("Indica cuántas Unidades trae cada Pack."); return; }
+      if (newProd.whMode === "packs" && (!newProd.whPacksPerCase || Number(newProd.whPacksPerCase) <= 0)) { setSaveError("Indica cuántos Packs trae la Caja."); return; }
+      if (!newProd.whUnitsPerPack || Number(newProd.whUnitsPerPack) <= 0) {
+        setSaveError(newProd.whMode === "packs" ? "Indica cuántas Unidades trae cada Pack." : `Indica cuántas unidades trae cada ${newProd.whPackName || "Caja"}.`);
+        return;
+      }
       if (!newProd.whPackCount || Number(newProd.whPackCount) <= 0) { setSaveError("Indica la cantidad de empaques (stock inicial)."); return; }
       setSaving(true); setSaveError("");
       try {
-        const packsPerCase = Number(newProd.whPacksPerCase);
+        const packsPerCase = newProd.whMode === "packs" ? Number(newProd.whPacksPerCase) : 1;
         const unitsPerPack = Number(newProd.whUnitsPerPack);
         const totalUnidadesPorCaja = calcUnitsPerCase(packsPerCase, unitsPerPack);
         const loc = locations.find(l => l.id === newProd.whLocationId);
@@ -481,7 +490,7 @@ const InventoryModule = ({
         setShowNewProd(false);
         setNewProd(p => ({
           ...p, name: "", sku: nextWhSku, description: "",
-          whPackName: "Caja", whPacksPerCase: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
+          whMode: "packs", whPackName: "Caja", whPacksPerCase: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
         }));
       } catch (err) {
         setSaveError(logAndGetErrorMessage(err, "Error al crear producto de almacén:"));
@@ -1073,24 +1082,63 @@ const InventoryModule = ({
                         <input value={newProd.whPackName} onChange={e => setNewProd(p => ({ ...p, whPackName: e.target.value }))} placeholder="Ej: Caja"
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
                       </div>
+                      {/* Modo: algunas cajas vienen con packs intermedios
+                          (ej. 10 packs de 6 galletas), otras traen las
+                          unidades sueltas directo (ej. 24 botellas) — el
+                          Dueño elige cuál es su caso, no hace falta
+                          "inventar" un pack de 1 unidad para poder guardar. */}
+                      <div className="col-span-2">
+                        <label className="text-xs text-slate-400 mb-1 block">¿Cómo vienen las unidades adentro de la {newProd.whPackName || "Caja"}?</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button type="button"
+                            onClick={() => setNewProd(p => ({ ...p, whMode: "packs" }))}
+                            className={`py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                              newProd.whMode === "packs" ? "bg-amber-500 border-amber-500 text-slate-900" : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600"
+                            }`}>
+                            Con Packs adentro
+                          </button>
+                          <button type="button"
+                            onClick={() => setNewProd(p => ({ ...p, whMode: "unidades" }))}
+                            className={`py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                              newProd.whMode === "unidades" ? "bg-amber-500 border-amber-500 text-slate-900" : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600"
+                            }`}>
+                            Solo Unidades sueltas
+                          </button>
+                        </div>
+                      </div>
                       {/* Jerarquía de 3 niveles: Caja → Packs → Unidades. Se
                           piden por separado (en vez de un solo multiplicador)
                           para poder mostrar/editar el desglose real más
                           adelante — el total (lo único que necesita el resto
                           del sistema) se calcula acá mismo, en vivo. */}
-                      <div>
-                        <label className="text-xs text-slate-400 mb-1 block">¿Cuántos Packs trae la {newProd.whPackName || "Caja"}? *</label>
-                        <input type="number" min="1" value={newProd.whPacksPerCase} onChange={e => setNewProd(p => ({ ...p, whPacksPerCase: e.target.value }))} placeholder="Ej: 10"
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400 mb-1 block">¿Cuántas Unidades trae cada Pack? *</label>
-                        <input type="number" min="1" value={newProd.whUnitsPerPack} onChange={e => setNewProd(p => ({ ...p, whUnitsPerPack: e.target.value }))} placeholder="Ej: 6"
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
-                      </div>
-                      {Number(newProd.whPacksPerCase) > 0 && Number(newProd.whUnitsPerPack) > 0 && (
+                      {newProd.whMode === "packs" ? (
+                        <>
+                          <div>
+                            <label className="text-xs text-slate-400 mb-1 block">¿Cuántos Packs trae la {newProd.whPackName || "Caja"}? *</label>
+                            <input type="number" min="1" value={newProd.whPacksPerCase} onChange={e => setNewProd(p => ({ ...p, whPacksPerCase: e.target.value }))} placeholder="Ej: 10"
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-slate-400 mb-1 block">¿Cuántas Unidades trae cada Pack? *</label>
+                            <input type="number" min="1" value={newProd.whUnitsPerPack} onChange={e => setNewProd(p => ({ ...p, whUnitsPerPack: e.target.value }))} placeholder="Ej: 6"
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                          </div>
+                        </>
+                      ) : (
+                        <div className="col-span-2">
+                          <label className="text-xs text-slate-400 mb-1 block">¿Cuántas Unidades trae la {newProd.whPackName || "Caja"}? *</label>
+                          <input type="number" min="1" value={newProd.whUnitsPerPack} onChange={e => setNewProd(p => ({ ...p, whUnitsPerPack: e.target.value }))} placeholder="Ej: 24"
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
+                        </div>
+                      )}
+                      {newProd.whMode === "packs" && Number(newProd.whPacksPerCase) > 0 && Number(newProd.whUnitsPerPack) > 0 && (
                         <div className="col-span-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
                           📦 1 {newProd.whPackName || "Caja"} = {newProd.whPacksPerCase} packs × {newProd.whUnitsPerPack} und = <strong>{calcUnitsPerCase(newProd.whPacksPerCase, newProd.whUnitsPerPack)} unidades</strong>
+                        </div>
+                      )}
+                      {newProd.whMode === "unidades" && Number(newProd.whUnitsPerPack) > 0 && (
+                        <div className="col-span-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
+                          📦 1 {newProd.whPackName || "Caja"} = <strong>{newProd.whUnitsPerPack} unidades</strong>
                         </div>
                       )}
                       <div>

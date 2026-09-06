@@ -24,7 +24,7 @@ import { formatMoney } from "../../utils/currency";
 export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", packsPerCase: "", unitsPerPack: "", unitPrice: "" };
+  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", whMode: "packs", packsPerCase: "", unitsPerPack: "", unitPrice: "" };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form,     setForm]     = useState(EMPTY_FORM);
@@ -42,6 +42,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
 
   function openEdit(p) {
     setEditItem(p);
+    const packsPerCase = p.packsPerCase ?? 1;
     setForm({
       ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", description: p.description || "", packName: p.packName || "",
       // Si el producto ya tiene el desglose guardado (0019_product_
@@ -51,7 +52,11 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
       // composición real solo para editar otra cosa — el total (1 ×
       // unitsPerPack) queda idéntico al pack_qty actual hasta que alguien
       // lo corrija a propósito.
-      packsPerCase: p.packsPerCase ?? 1,
+      // whMode se infiere del dato guardado: packsPerCase=1 es
+      // matemáticamente lo mismo que "unidades sueltas sin pack
+      // intermedio", así que se edita con ese modo por defecto.
+      whMode: Number(packsPerCase) <= 1 ? "unidades" : "packs",
+      packsPerCase,
       unitsPerPack: p.unitsPerPack ?? (p.packQty ?? ""),
       unitPrice: p.unitPrice ?? "",
     });
@@ -61,11 +66,14 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
   async function handleSave() {
     if (!form.name.trim())              { setError("El nombre es obligatorio."); return; }
     if (!form.packName.trim())          { setError('Indica el nombre de la unidad mayorista (ej: "Caja").'); return; }
-    if (!form.packsPerCase || Number(form.packsPerCase) <= 0) { setError(`Indica cuántos packs trae la ${form.packName || "Caja"}.`); return; }
-    if (!form.unitsPerPack || Number(form.unitsPerPack) <= 0) { setError("Indica cuántas unidades trae cada pack."); return; }
+    if (form.whMode === "packs" && (!form.packsPerCase || Number(form.packsPerCase) <= 0)) { setError(`Indica cuántos packs trae la ${form.packName || "Caja"}.`); return; }
+    if (!form.unitsPerPack || Number(form.unitsPerPack) <= 0) {
+      setError(form.whMode === "packs" ? "Indica cuántas unidades trae cada pack." : `Indica cuántas unidades trae la ${form.packName || "Caja"}.`);
+      return;
+    }
     setError(""); setSaving(true);
     try {
-      const packsPerCase = Number(form.packsPerCase);
+      const packsPerCase = form.whMode === "packs" ? Number(form.packsPerCase) : 1;
       const unitsPerPack = Number(form.unitsPerPack);
       const payload = {
         name: form.name.trim(),
@@ -162,22 +170,54 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
               <input value={form.packName} onChange={e => setF("packName", e.target.value)} placeholder="Ej: Caja"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
+            <div className="col-span-2">
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cómo vienen las unidades adentro de la {form.packName || "Caja"}?</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setF("whMode", "packs")}
+                  className={`py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                    form.whMode === "packs" ? "bg-amber-500 border-amber-500 text-slate-900" : "bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600"
+                  }`}>
+                  Con Packs adentro
+                </button>
+                <button type="button" onClick={() => setF("whMode", "unidades")}
+                  className={`py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                    form.whMode === "unidades" ? "bg-amber-500 border-amber-500 text-slate-900" : "bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600"
+                  }`}>
+                  Solo Unidades sueltas
+                </button>
+              </div>
+            </div>
             {/* Jerarquía de 3 niveles: Caja → Packs → Unidades — mismo
                 criterio que "Nuevo Producto"; el total (lo único que usan
                 las RPC de almacén) se calcula acá mismo, en vivo. */}
-            <div>
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cuántos Packs trae la {form.packName || "Caja"}? *</label>
-              <input type="number" min="1" value={form.packsPerCase} onChange={e => setF("packsPerCase", e.target.value)} placeholder="Ej: 10"
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cuántas Unidades trae cada Pack? *</label>
-              <input type="number" min="1" value={form.unitsPerPack} onChange={e => setF("unitsPerPack", e.target.value)} placeholder="Ej: 6"
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
-            </div>
-            {Number(form.packsPerCase) > 0 && Number(form.unitsPerPack) > 0 && (
+            {form.whMode === "packs" ? (
+              <>
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cuántos Packs trae la {form.packName || "Caja"}? *</label>
+                  <input type="number" min="1" value={form.packsPerCase} onChange={e => setF("packsPerCase", e.target.value)} placeholder="Ej: 10"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cuántas Unidades trae cada Pack? *</label>
+                  <input type="number" min="1" value={form.unitsPerPack} onChange={e => setF("unitsPerPack", e.target.value)} placeholder="Ej: 6"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
+                </div>
+              </>
+            ) : (
+              <div className="col-span-2">
+                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cuántas Unidades trae la {form.packName || "Caja"}? *</label>
+                <input type="number" min="1" value={form.unitsPerPack} onChange={e => setF("unitsPerPack", e.target.value)} placeholder="Ej: 24"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
+              </div>
+            )}
+            {form.whMode === "packs" && Number(form.packsPerCase) > 0 && Number(form.unitsPerPack) > 0 && (
               <div className="col-span-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-[11px] text-amber-300">
                 📦 1 {form.packName || "Caja"} = {form.packsPerCase} packs × {form.unitsPerPack} und = <strong>{calcUnitsPerCase(form.packsPerCase, form.unitsPerPack)} unidades</strong>
+              </div>
+            )}
+            {form.whMode === "unidades" && Number(form.unitsPerPack) > 0 && (
+              <div className="col-span-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-[11px] text-amber-300">
+                📦 1 {form.packName || "Caja"} = <strong>{form.unitsPerPack} unidades</strong>
               </div>
             )}
             <div className="col-span-2 sm:col-span-1">
