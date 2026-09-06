@@ -33,16 +33,31 @@ import ImportExcelModal from "../components/ImportExcelModal";
 // llenan, el producto queda con su propio precio de Pack independiente
 // (para un descuento por volumen real) — igual que crear el producto a
 // mano con dos presentaciones (ver PresentationsEditor).
+// Plantilla para importar productos de INVENTARIO. Soporta hasta 3
+// presentaciones de venta por producto — "Unidad" (siempre, columnas base)
+// más "Presentación 2" y "Presentación 3" (opcionales, ej. "Pack" y "Caja"),
+// cada una con su PROPIO multiplicador, precio y código de barras — mismo
+// modelo que el editor manual de "Nuevo Producto" (PresentationsEditor /
+// packaging.js). Para usar una presentación extra hay que completar SU
+// nombre Y su multiplicador juntos; si el precio se deja vacío, se calcula
+// como precio unitario × multiplicador (sin descuento por volumen propio).
 const PRODUCT_IMPORT_HEADERS = [
   "SKU / Código", "Nombre", "Descripción", "Categoría",
   "Precio de Venta", "Costo", "Stock Inicial", "Stock Mínimo",
-  "Unidades por Empaque", "Nombre del Empaque", "Precio del Empaque", "Código de Barras del Empaque",
-  "Código de Barras",
+  "Código de Barras (Unidad)",
+  "Nombre Presentación 2", "Multiplicador Presentación 2", "Precio Presentación 2", "Código de Barras Presentación 2",
+  "Nombre Presentación 3", "Multiplicador Presentación 3", "Precio Presentación 3", "Código de Barras Presentación 3",
 ];
 const PRODUCT_IMPORT_EXAMPLE = [
-  { "SKU / Código": "001", "Nombre": "Coca Cola 500ml", "Descripción": "Bebida gaseosa", "Categoría": "Bebidas", "Precio de Venta": 3.5, "Costo": 2.2, "Stock Inicial": 48, "Stock Mínimo": 10, "Unidades por Empaque": 6, "Nombre del Empaque": "", "Precio del Empaque": "", "Código de Barras del Empaque": "", "Código de Barras": "" },
-  { "SKU / Código": "", "Nombre": "Arroz Extra 1kg", "Descripción": "", "Categoría": "Abarrotes", "Precio de Venta": 5.9, "Costo": 4.3, "Stock Inicial": 30, "Stock Mínimo": 5, "Unidades por Empaque": "", "Nombre del Empaque": "", "Precio del Empaque": "", "Código de Barras del Empaque": "", "Código de Barras": "" },
-  { "SKU / Código": "", "Nombre": "Galleta de Chocolate", "Descripción": "", "Categoría": "Snacks", "Precio de Venta": 1, "Costo": 0.5, "Stock Inicial": 60, "Stock Mínimo": 12, "Unidades por Empaque": 6, "Nombre del Empaque": "Pack", "Precio del Empaque": 5, "Código de Barras del Empaque": "", "Código de Barras": "" },
+  { "SKU / Código": "001", "Nombre": "Coca Cola 500ml", "Descripción": "Bebida gaseosa", "Categoría": "Bebidas", "Precio de Venta": 3.5, "Costo": 2.2, "Stock Inicial": 48, "Stock Mínimo": 10, "Código de Barras (Unidad)": "",
+    "Nombre Presentación 2": "Pack", "Multiplicador Presentación 2": 6, "Precio Presentación 2": 19, "Código de Barras Presentación 2": "",
+    "Nombre Presentación 3": "Caja", "Multiplicador Presentación 3": 24, "Precio Presentación 3": 72, "Código de Barras Presentación 3": "" },
+  { "SKU / Código": "", "Nombre": "Arroz Extra 1kg", "Descripción": "", "Categoría": "Abarrotes", "Precio de Venta": 5.9, "Costo": 4.3, "Stock Inicial": 30, "Stock Mínimo": 5, "Código de Barras (Unidad)": "",
+    "Nombre Presentación 2": "", "Multiplicador Presentación 2": "", "Precio Presentación 2": "", "Código de Barras Presentación 2": "",
+    "Nombre Presentación 3": "", "Multiplicador Presentación 3": "", "Precio Presentación 3": "", "Código de Barras Presentación 3": "" },
+  { "SKU / Código": "", "Nombre": "Galleta de Chocolate", "Descripción": "", "Categoría": "Snacks", "Precio de Venta": 1, "Costo": 0.5, "Stock Inicial": 60, "Stock Mínimo": 12, "Código de Barras (Unidad)": "",
+    "Nombre Presentación 2": "Pack", "Multiplicador Presentación 2": 6, "Precio Presentación 2": 5, "Código de Barras Presentación 2": "",
+    "Nombre Presentación 3": "", "Multiplicador Presentación 3": "", "Precio Presentación 3": "", "Código de Barras Presentación 3": "" },
 ];
 
 // Plantilla para importar productos de ALMACÉN (independiente de la de
@@ -249,23 +264,46 @@ const InventoryModule = ({
       }
       usedInBatch.add(sku.toLowerCase());
 
-      const packQty     = Number(raw["Unidades por Empaque"]) || 0;
-      const packName    = String(raw["Nombre del Empaque"] ?? "").trim() || "Pack";
-      const packPrice   = Number(raw["Precio del Empaque"]) || 0;
-      const packBarcode = String(raw["Código de Barras del Empaque"] ?? "").trim();
       const stock    = Number(raw["Stock Inicial"]) || 0;
       const minStock = Number(raw["Stock Mínimo"]) || 4;
       const cost     = Number(raw["Costo"]) || 0;
-      const barcode  = String(raw["Código de Barras"] ?? "").trim() || generateBarcode();
+      const barcode  = String(raw["Código de Barras (Unidad)"] ?? "").trim() || generateBarcode();
 
-      // Si trae "Unidades por Empaque", se arma la presentación de Pack —
-      // con SU PROPIO precio si vino en el Excel (para un descuento por
-      // volumen real), o al precio unitario × esas unidades si no (mismo
-      // resultado que el comportamiento de siempre, sin descuento propio).
-      const presentations = packQty > 0 ? [
+      // Presentaciones — "Unidad" siempre; "Presentación 2"/"Presentación 3"
+      // son opcionales (el usuario les pone el nombre que quiera: Pack,
+      // Caja, Media Docena...), cada una con su propio multiplicador,
+      // precio y código de barras — mismo modelo que "Nuevo Producto"
+      // manual (PresentationsEditor / packaging.js), a diferencia de la
+      // versión anterior de este import que solo soportaba un "Empaque"
+      // fijo. Si el precio de una presentación extra se deja vacío, se
+      // calcula como precio unitario × multiplicador (sin descuento por
+      // volumen propio) — mismo criterio que el alta manual.
+      const presentations = [
         { id: makePresentationId(), name: "Unidad", multiplier: 1, price, barcode },
-        { id: makePresentationId(), name: packName, multiplier: packQty, price: packPrice > 0 ? packPrice : price * packQty, barcode: packBarcode || generateBarcode() },
-      ] : [];
+      ];
+      for (const n of [2, 3]) {
+        const presName = String(raw[`Nombre Presentación ${n}`] ?? "").trim();
+        const presMultiplier = Number(raw[`Multiplicador Presentación ${n}`]) || 0;
+        if (!presName && !presMultiplier) continue; // esta presentación extra no se usó en esta fila
+        if (!presName || !presMultiplier) {
+          return { ok: false, label, error: `"Presentación ${n}": completa el nombre y el multiplicador juntos, o deja ambas columnas vacías.` };
+        }
+        const presPrice = Number(raw[`Precio Presentación ${n}`]) || 0;
+        const presBarcode = String(raw[`Código de Barras Presentación ${n}`] ?? "").trim();
+        presentations.push({
+          id: makePresentationId(), name: presName, multiplier: presMultiplier,
+          price: presPrice > 0 ? presPrice : price * presMultiplier,
+          barcode: presBarcode || generateBarcode(),
+        });
+      }
+
+      // Mismas reglas que el formulario manual (multiplicadores y códigos
+      // de barras sin repetir, cada presentación con precio > 0, etc.) —
+      // así una planilla mal armada no cuela un producto inconsistente.
+      const presCheck = validatePresentations(presentations);
+      if (!presCheck.ok) return { ok: false, label, error: presCheck.error };
+
+      const { packQty } = deriveLegacyFieldsFromPresentations(presentations);
 
       return {
         ok: true,
@@ -275,7 +313,7 @@ const InventoryModule = ({
           description: String(raw["Descripción"] ?? "").trim(),
           category:    String(raw["Categoría"] ?? "").trim(),
           price, cost, stock, minStock,
-          packQty: packQty || null,
+          packQty,
           barcode, presentations,
         },
       };
