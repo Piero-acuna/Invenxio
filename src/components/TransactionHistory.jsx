@@ -59,9 +59,19 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
   const unifiedHistory = useMemo(() => {
     const items = [];
 
+    // BUG QUE ESTO EVITA: registrar_ventas/registrar_compras controlan
+    // quién puede REGISTRAR ventas/compras nuevas — no deberían decidir si
+    // esos eventos entran en los TOTALES de rentabilidad de alguien que sí
+    // tiene ver_metricas_financieras (ej. un rol de "solo ver reportes",
+    // sin permiso para registrar nada). Antes, ese usuario veía Ingresos,
+    // Egresos, Ganancia Bruta y Margen en cero — no porque no hubiera
+    // datos, sino porque este filtro los descartaba antes de sumarlos.
+    const canSeeSalesHistory    = canSell     || canViewFinance;
+    const canSeePurchaseHistory = canPurchase || canViewFinance;
+
     rawTransactions.forEach(t => {
-      if (t.type === "venta"  && !canSell) return;
-      if (t.type === "compra" && !canPurchase) return;
+      if (t.type === "venta"  && !canSeeSalesHistory)    return;
+      if (t.type === "compra" && !canSeePurchaseHistory) return;
       // BUG QUE ESTO EVITA: t.qty en una venta SIEMPRE está en unidades
       // base (ver record_sale() SQL) — incluso cuando se vendió por Pack.
       // Mostrar ese número pegado a t.packName ("12 Pack") se lee como "12
@@ -85,7 +95,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       });
     });
 
-    if (canPurchase || canSell) {
+    if (canPurchase || canSell || canViewFinance) {
       supplierSales.forEach(s => {
         items.push({
           id: `ss-${s.id}`,
@@ -155,7 +165,7 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
       const tb = b.raw?.createdAt?.toDate ? b.raw.createdAt.toDate().getTime() : new Date(b.date || "1970-01-01").getTime();
       return tb - ta;
     });
-  }, [rawTransactions, warehouseMovements, supplierSales, productAdjustments, canPurchase, canSell]);
+  }, [rawTransactions, warehouseMovements, supplierSales, productAdjustments, canPurchase, canSell, canViewFinance]);
 
   // ── Datos para el gráfico de rentabilidad: por día, semana o mes ─────────
   // Se arma a partir de `unifiedHistory` (no solo de la colección
