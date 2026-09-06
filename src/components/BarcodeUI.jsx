@@ -85,9 +85,11 @@ function BarcodeDisplay({ value, height = 80, showDownload = false, productName 
 // Si BarcodeDetector nativo está disponible → detección automática.
 // Si no → cámara visible + entrada manual (el usuario apunta y escribe el código).
 function BarcodeScanner({ onDetected, onClose }) {
-  const videoRef  = useRef(null);
-  const readerRef = useRef(null);
-  const doneRef   = useRef(false);
+  const videoRef     = useRef(null);
+  const readerRef    = useRef(null);
+  const controlsRef  = useRef(null);
+  const doneRef      = useRef(false);
+  const cancelledRef = useRef(false);
 
   const [camStatus, setCamStatus] = useState("starting");
   const [manual,    setManual]    = useState("");
@@ -95,6 +97,7 @@ function BarcodeScanner({ onDetected, onClose }) {
   useEffect(() => {
     const reader = new BrowserMultiFormatReader();
     readerRef.current = reader;
+    cancelledRef.current = false;
 
     async function start() {
       try {
@@ -102,12 +105,18 @@ function BarcodeScanner({ onDetected, onClose }) {
           videoRef.current.onplay = () => setCamStatus("active");
         }
 
-        await reader.decodeFromConstraints(
+        const controls = await reader.decodeFromConstraints(
           {
             video: {
               facingMode: { ideal: "environment" },
-              width:  { ideal: 1280 },
-              height: { ideal: 720 },
+              // Resolución alta: más detalle por frame ayuda a que el
+              // propio sensor enfoque mejor en celulares de cámara floja,
+              // y a decodificar códigos pequeños o algo lejos.
+              width:  { ideal: 1920 },
+              height: { ideal: 1080 },
+              // Enfoque continuo — Chrome/Android lo respeta cuando el
+              // hardware lo soporta; en el resto simplemente se ignora.
+              focusMode: { ideal: "continuous" },
             },
           },
           videoRef.current,
@@ -115,38 +124,66 @@ function BarcodeScanner({ onDetected, onClose }) {
             if (doneRef.current) return;
             if (result) {
               doneRef.current = true;
-              cleanup();
+              controls.stop();
               onDetected(result.getText());
             }
             // _err es normal cuando no hay código en el frame — ignorar
           }
         );
+
+        // El usuario pudo cerrar el modal MIENTRAS la cámara todavía
+        // estaba iniciando (esta promesa tarda unos cientos de ms). Si
+        // eso pasó, hay que apagarla apenas resuelve — si no, la cámara
+        // se queda prendida (luz encendida) aunque el modal ya se cerró.
+        if (cancelledRef.current) {
+          controls.stop();
+          return;
+        }
+        controlsRef.current = controls;
+
+        // Refuerzo de enfoque continuo directo sobre el track de video,
+        // por si el navegador solo lo acepta vía applyConstraints y no
+        // como parte de los constraints iniciales de getUserMedia.
+        try {
+          const track = videoRef.current?.srcObject?.getVideoTracks?.()[0];
+          const caps  = track?.getCapabilities?.();
+          if (track && caps?.focusMode?.includes("continuous")) {
+            await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+          }
+        } catch (_) {
+          // No soportado en este dispositivo/navegador — no es un error real.
+        }
       } catch (err) {
         console.error("Scanner error:", err);
         setCamStatus("error");
       }
     }
 
-    function cleanup() {
-      try { readerRef.current?.reset(); } catch (_) {}
-    }
-
     start();
-    return cleanup;
+    return () => {
+      cancelledRef.current = true;
+      // Este es el fix real: la librería @zxing/browser NO tiene un
+      // método reset() en BrowserMultiFormatReader (llamarlo tira un
+      // TypeError que quedaba silenciado por el try/catch, así que la
+      // cámara nunca se apagaba). Lo correcto es controls.stop() —el
+      // objeto que devuelve decodeFromConstraints— que sí libera el
+      // MediaStream y apaga la luz de la cámara.
+      try { controlsRef.current?.stop(); } catch (_) {}
+    };
   }, []); // eslint-disable-line
 
   const submitManual = () => {
     const code = manual.trim();
     if (!code) return;
     doneRef.current = true;
-    try { readerRef.current?.reset(); } catch (_) {}
+    try { controlsRef.current?.stop(); } catch (_) {}
     onDetected(code);
   };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="relative z-10 w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-700">
@@ -193,25 +230,25 @@ function BarcodeScanner({ onDetected, onClose }) {
               {/* Overlay oscuro con recorte */}
               <div className="absolute inset-0 z-10 pointer-events-none"
                 style={{
-                  background: `linear-gradient(rgba(0,0,0,0.45) 0%, transparent 25%, transparent 75%, rgba(0,0,0,0.45) 100%),
-                               linear-gradient(90deg, rgba(0,0,0,0.45) 0%, transparent 15%, transparent 85%, rgba(0,0,0,0.45) 100%)`
+                  background: `linear-gradient(rgba(0,0,0,0.45) 0%, transparent 22%, transparent 78%, rgba(0,0,0,0.45) 100%),
+                               linear-gradient(90deg, rgba(0,0,0,0.45) 0%, transparent 8%, transparent 92%, rgba(0,0,0,0.45) 100%)`
                 }}
               />
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-                <div className="relative w-64 h-36">
+                <div className="relative w-[85%] max-w-[420px] aspect-[2/1]">
                   {/* Esquinas del marco */}
                   {[
-                    ["top-0 left-0",     "border-t-3 border-l-3"],
-                    ["top-0 right-0",    "border-t-3 border-r-3"],
-                    ["bottom-0 left-0",  "border-b-3 border-l-3"],
-                    ["bottom-0 right-0", "border-b-3 border-r-3"],
+                    ["top-0 left-0",     "border-t-4 border-l-4"],
+                    ["top-0 right-0",    "border-t-4 border-r-4"],
+                    ["bottom-0 left-0",  "border-b-4 border-l-4"],
+                    ["bottom-0 right-0", "border-b-4 border-r-4"],
                   ].map(([pos, cls], i) => (
-                    <div key={i} className={`absolute ${pos} w-8 h-8 border-amber-400 ${cls}`}
-                      style={{ borderWidth: 3 }} />
+                    <div key={i} className={`absolute ${pos} w-11 h-11 border-amber-400 ${cls}`}
+                      style={{ borderWidth: 4 }} />
                   ))}
                   {/* Línea de escaneo */}
                   <div
-                    className="absolute left-3 right-3 h-0.5 bg-amber-400 rounded shadow-lg"
+                    className="absolute left-4 right-4 h-0.5 bg-amber-400 rounded shadow-lg"
                     style={{
                       boxShadow: "0 0 8px 2px rgba(251,191,36,0.6)",
                       animation: "scanline 1.8s ease-in-out infinite",
