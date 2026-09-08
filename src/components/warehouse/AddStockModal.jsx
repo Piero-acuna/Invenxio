@@ -19,7 +19,7 @@ export default function AddStockModal({ product, locations, companyId, userName,
 
   async function handleAdd() {
     if (!locationId) { setError("Selecciona una ubicación."); return; }
-    if (!packCount || Number(packCount) <= 0) { setError("Ingresa una cantidad de empaques válida."); return; }
+    if (!packCount || Number(packCount) <= 0) { setError(product.unitType === "peso" ? "Ingresa una cantidad de Kg válida." : "Ingresa una cantidad de empaques válida."); return; }
     setError(""); setSaving(true);
     try {
       const loc = locations.find(l => l.id === locationId);
@@ -54,13 +54,16 @@ export default function AddStockModal({ product, locations, companyId, userName,
           </select>
         </div>
         <div>
-          <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Cantidad de {product.packName} ({product.packQty} und c/u) *</label>
-          {product.packsPerCase > 1 && (
+          <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">
+            {product.unitType === "peso" ? "Cantidad (Kg) *" : `Cantidad de ${product.packName} (${product.packQty} und c/u) *`}
+          </label>
+          {product.unitType !== "peso" && product.packsPerCase > 1 && (
             <p className="text-[10px] text-slate-500 mb-1">1 {product.packName} = {product.packsPerCase} packs × {product.unitsPerPack} und</p>
           )}
-          <input type="number" min="1" value={packCount} onChange={e => setPackCount(e.target.value)} placeholder="Ej: 5"
+          <input type="number" min={product.unitType === "peso" ? "0.001" : "1"} step={product.unitType === "peso" ? "0.001" : "1"}
+            value={packCount} onChange={e => setPackCount(e.target.value)} placeholder={product.unitType === "peso" ? "Ej: 25.500" : "Ej: 5"}
             className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
-          {Number(packCount) > 0 && <p className="text-[10px] text-amber-400/80 mt-1">= {calcUnitsFromPacks(packCount, product.packQty)} und en total</p>}
+          {product.unitType !== "peso" && Number(packCount) > 0 && <p className="text-[10px] text-amber-400/80 mt-1">= {calcUnitsFromPacks(packCount, product.packQty)} und en total</p>}
         </div>
         <div>
           <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Motivo</label>

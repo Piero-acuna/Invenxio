@@ -8,21 +8,26 @@
 // reconfigurar su multiplicador (ver isBase/locked en src/utils/packaging.js).
 // ─────────────────────────────────────────────────────────────────────────────
 import { Plus, X, ScanBarcode, AlertTriangle } from "lucide-react";
-import { buildEmptyPresentation } from "../../utils/packaging";
+import { buildEmptyPresentation, qtyInputProps } from "../../utils/packaging";
 import { calcProfit, calcMarginPercent } from "../../utils/finance";
 import { formatMoney } from "../../utils/currency";
 
-const PresentationsEditor = ({ presentations, onChange, currencySymbol, onScanRequest, cost }) => {
+const PresentationsEditor = ({ presentations, onChange, currencySymbol, onScanRequest, cost, unitType = "unidad" }) => {
   const updateRow = (i, patch) => onChange(presentations.map((x, xi) => (xi === i ? { ...x, ...patch } : x)));
   const removeRow = (i) => onChange(presentations.filter((_, xi) => xi !== i));
   const addRow = () => onChange([...presentations, buildEmptyPresentation()]);
+  const unitWord = unitType === "peso" ? "Kg" : "unidades";
+  const qtyProps = qtyInputProps(unitType);
 
   return (
     <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-[10px] text-slate-500 uppercase tracking-wider">Presentaciones de venta</p>
-          <p className="text-[10px] text-slate-500 mt-0.5">Cada una con su propio precio y código de barras — todas descuentan del mismo stock en unidades.</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            Cada una con su propio precio y código de barras — todas descuentan del mismo stock en {unitWord}
+            {unitType === "peso" ? " (admite decimales, ej. 0.250)" : ""}.
+          </p>
         </div>
         <button type="button" onClick={addRow}
           className="shrink-0 text-[11px] text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 whitespace-nowrap">
@@ -47,9 +52,9 @@ const PresentationsEditor = ({ presentations, onChange, currencySymbol, onScanRe
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <label className="text-[10px] text-slate-500 mb-0.5 block">{pres.isBase ? "Multiplicador (fijo)" : "Multiplicador de stock"}</label>
-                <input type="number" min="1" step="1" value={pres.multiplier} disabled={pres.isBase}
+                <input type="number" min={pres.isBase ? "1" : qtyProps.min} step={pres.isBase ? "1" : qtyProps.step} value={pres.multiplier} disabled={pres.isBase}
                   onChange={e => updateRow(i, { multiplier: e.target.value })}
-                  placeholder="Ej: 6"
+                  placeholder={unitType === "peso" ? "Ej: 5 (Kg)" : "Ej: 6"}
                   className="w-full px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" />
               </div>
               <div>
@@ -72,7 +77,7 @@ const PresentationsEditor = ({ presentations, onChange, currencySymbol, onScanRe
               </div>
             </div>
             {!pres.isBase && Number(pres.multiplier) > 0 && (
-              <p className="text-[10px] text-slate-500">📦 Vender 1 "{pres.name || "presentación"}" descuenta {pres.multiplier} unidades del stock.</p>
+              <p className="text-[10px] text-slate-500">📦 Vender 1 "{pres.name || "presentación"}" descuenta {pres.multiplier} {unitWord} del stock.</p>
             )}
             {/* Margen por presentación — un descuento por volumen mal
                 calculado (ej. Pack más barato que 6 × costo unitario) es

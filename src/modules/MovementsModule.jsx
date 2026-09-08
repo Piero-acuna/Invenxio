@@ -115,27 +115,29 @@ const MovementsModule = ({
         .map(item => {
           const live = products.find(p => p.id === item.id);
           const liveStock = live.stock || 0;
+          const liveUnitType = live.unitType || "unidad";
           // La presentación vendida puede haber cambiado de precio, o
           // incluso haber sido borrada (se editó el producto mientras
           // seguía en el carrito) — se re-resuelve contra las
           // presentaciones vendibles ACTUALES; si ya no existe, se cae a
-          // la presentación base ("Unidad") en vez de dejar el ítem con
-          // datos que ya no corresponden a nada.
+          // la presentación base ("Unidad"/"Kg") en vez de dejar el ítem
+          // con datos que ya no corresponden a nada.
           const livePresentations = getSellablePresentations(live);
           const livePres = livePresentations.find(p => p.id === item.presentationId) || livePresentations[0];
           const liveMultiplier = Number(livePres?.multiplier) || 1;
           const livePrice = Number(livePres?.price) || 0;
-          const maxQty = Math.floor(liveStock / liveMultiplier);
+          const rawMaxQty = liveStock / liveMultiplier;
+          const maxQty = liveUnitType === "peso" ? rawMaxQty : Math.floor(rawMaxQty);
           const cappedQty = Math.min(item.qty, maxQty);
           if (
             livePrice !== item.price || liveMultiplier !== item.multiplier || livePres?.id !== item.presentationId ||
-            live.name !== item.name || live.description !== item.description || cappedQty !== item.qty
+            live.name !== item.name || live.description !== item.description || cappedQty !== item.qty || liveUnitType !== item.unitType
           ) {
             changed = true;
             return {
               ...item, price: livePrice, multiplier: liveMultiplier, presentationId: livePres?.id,
               presentationName: livePres?.name, name: live.name, description: live.description,
-              stock: liveStock, qty: cappedQty,
+              stock: liveStock, qty: cappedQty, unitType: liveUnitType,
             };
           }
           return item;
@@ -162,17 +164,23 @@ const MovementsModule = ({
   // así "Galleta — Unidad" y "Galleta — Pack" pueden convivir en el mismo
   // carrito. `qty` en el carrito es "cuántas de esa presentación" (ej. 2
   // Packs); el tope real es en unidades base (maxQty = stock / multiplier).
+  // Productos por Peso (unitType="peso"): el tope NO se redondea hacia
+  // abajo (Math.floor) — con stock 10.5 kg se puede vender exactamente
+  // 10.5, no solo 10 — y el cajero escribe el peso exacto en vez de tocar
+  // "+1" (ver el input decimal en el render del carrito, más abajo).
   const addToCart = useCallback((product, presentation) => {
     setSSearch("");
     const multiplier = Number(presentation.multiplier) || 1;
-    const maxQty = Math.floor((product.stock || 0) / multiplier);
+    const unitType = product.unitType || "unidad";
+    const rawMaxQty = (product.stock || 0) / multiplier;
+    const maxQty = unitType === "peso" ? rawMaxQty : Math.floor(rawMaxQty);
     setCart(prev => {
       const ex = prev.find(i => i.id === product.id && i.presentationId === presentation.id);
       return ex
         ? prev.map(i => (i === ex ? { ...i, qty: Math.min(i.qty + 1, maxQty) } : i))
         : [...prev, {
             id: product.id, name: product.name, sku: product.sku, description: product.description,
-            stock: product.stock || 0,
+            stock: product.stock || 0, unitType,
             presentationId: presentation.id, presentationName: presentation.name, multiplier,
             price: Number(presentation.price) || 0, qty: Math.min(1, maxQty),
           }];
@@ -198,6 +206,15 @@ const MovementsModule = ({
 
   const handleSale = async () => {
     if (cart.length === 0) return;
+    // El input decimal de los ítems por Peso permite quedar momentáneamente
+    // vacío mientras se escribe (para poder borrar el "0" y tecliar "0.35")
+    // — se corrige recién al perder el foco (onBlur). Si el cajero le da a
+    // "Cobrar" ANTES de eso (ej. tocó Enter o el botón sin salir del
+    // campo), acá se bloquea en vez de mandar una cantidad vacía/0 al RPC.
+    if (cart.some(i => !i.qty || Number(i.qty) <= 0)) {
+      setSaleError("Hay un producto con cantidad vacía o en 0 en el carrito. Corrígela antes de cobrar.");
+      return;
+    }
     setSSaving(true);
     setInvoiceMsg("");
     setSaleError("");
@@ -388,27 +405,56 @@ const MovementsModule = ({
                 </div>
               )}
               {cart.map(item => {
-                const maxQty = Math.floor((item.stock || 0) / (Number(item.multiplier) || 1));
+                const rawMaxQty = (item.stock || 0) / (Number(item.multiplier) || 1);
+                const isPeso = item.unitType === "peso";
+                const maxQty = isPeso ? rawMaxQty : Math.floor(rawMaxQty);
                 const isSameLine = i => i.id === item.id && i.presentationId === item.presentationId;
                 return (
                   <div key={`${item.id}:${item.presentationId}`} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-slate-200 truncate">
                         {item.name}
-                        {item.presentationName && item.presentationName !== "Unidad" && (
+                        {item.presentationName && item.presentationName !== "Unidad" && item.presentationName !== "Kg" && (
                           <span className="ml-1.5 px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded text-[10px] font-semibold align-middle">{item.presentationName}</span>
                         )}
                       </p>
-                      <p className="text-xs text-slate-500 font-mono">{formatMoney(item.price, currencySymbol)} c/u</p>
+                      <p className="text-xs text-slate-500 font-mono">{formatMoney(item.price, currencySymbol)} {isPeso ? "/kg" : "c/u"}</p>
                       {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
                     </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => setCart(prev => prev.map(i => isSameLine(i) ? { ...i, qty: Math.max(1, i.qty - 1) } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Minus size={10} className="text-slate-300" /></button>
-                      <span className="text-sm font-mono font-bold text-white w-5 text-center">{item.qty}</span>
-                      <button onClick={() => setCart(prev => prev.map(i => isSameLine(i) && i.qty < maxQty ? { ...i, qty: i.qty + 1 } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Plus size={10} className="text-slate-300" /></button>
-                      <button onClick={() => setCart(prev => prev.filter(i => !isSameLine(i)))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
-                    </div>
-                    <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">{formatMoney((item.price || 0) * item.qty, currencySymbol)}</span>
+                    {/* Productos por Peso: el cajero teclea el peso exacto
+                        (ej. de la balanza) en vez de tocar "+1" trescientas
+                        veces para llegar a 0.350 kg. Se acota al stock
+                        disponible (maxQty, sin redondear) al perder el foco
+                        — mientras escribe se deja el valor libre, si no no
+                        se podría borrar el "0" para escribir "0.35". */}
+                    {isPeso ? (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <input
+                          type="number" min="0.001" step="0.001" value={item.qty}
+                          onChange={e => {
+                            const v = e.target.value;
+                            setCart(prev => prev.map(i => isSameLine(i) ? { ...i, qty: v === "" ? "" : Number(v) } : i));
+                          }}
+                          onBlur={() => setCart(prev => prev.map(i => {
+                            if (!isSameLine(i)) return i;
+                            const n = Number(i.qty);
+                            const clamped = !n || n <= 0 ? 0.001 : Math.min(n, maxQty);
+                            return { ...i, qty: clamped };
+                          }))}
+                          className="w-16 px-1.5 py-1 bg-slate-800 border border-slate-600 rounded text-sm font-mono font-bold text-white text-center focus:outline-none focus:border-amber-500"
+                        />
+                        <span className="text-[10px] text-slate-500">kg</span>
+                        <button onClick={() => setCart(prev => prev.filter(i => !isSameLine(i)))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button onClick={() => setCart(prev => prev.map(i => isSameLine(i) ? { ...i, qty: Math.max(1, i.qty - 1) } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Minus size={10} className="text-slate-300" /></button>
+                        <span className="text-sm font-mono font-bold text-white w-5 text-center">{item.qty}</span>
+                        <button onClick={() => setCart(prev => prev.map(i => isSameLine(i) && i.qty < maxQty ? { ...i, qty: i.qty + 1 } : i))} className="w-6 h-6 bg-slate-600 hover:bg-slate-500 rounded flex items-center justify-center transition-colors"><Plus size={10} className="text-slate-300" /></button>
+                        <button onClick={() => setCart(prev => prev.filter(i => !isSameLine(i)))} className="w-6 h-6 text-red-500 hover:bg-red-500/20 rounded flex items-center justify-center transition-colors ml-1"><Trash2 size={10} /></button>
+                      </div>
+                    )}
+                    <span className="text-xs font-mono text-amber-400 w-16 text-right flex-shrink-0">{formatMoney((item.price || 0) * (Number(item.qty) || 0), currencySymbol)}</span>
                   </div>
                 );
               })}

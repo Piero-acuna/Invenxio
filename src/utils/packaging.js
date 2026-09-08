@@ -57,19 +57,34 @@ export function makePresentationId() {
  * producto de Inventario arranca solo con "Unidad" (unidad mínima,
  * multiplicador fijo en 1, no se puede borrar). El usuario agrega el resto
  * (Pack, Caja, etc.) él mismo con "+ Agregar" — no vienen precargadas.
+ * unitType="peso" nombra esa fila base "Kg" en vez de "Unidad" — sigue
+ * siendo multiplicador 1 (1 Kg = la unidad base), pero admite decimales
+ * (ver stock/qty numeric(14,3) en la base, y los inputs con step="0.001").
  */
-export function buildDefaultPresentations() {
+export function buildDefaultPresentations(unitType = "unidad") {
   return [
     // isBase: true bloquea el multiplicador en 1 en la UI — se identifica
     // por este flag, no por el nombre, para que renombrar "Unidad" (ej. a
     // "Suelto") no le haga perder su rol de unidad base.
-    { id: makePresentationId(), name: "Unidad", multiplier: 1, price: "", barcode: "", locked: true, isBase: true },
+    { id: makePresentationId(), name: unitType === "peso" ? "Kg" : "Unidad", multiplier: 1, price: "", barcode: "", locked: true, isBase: true },
   ];
 }
 
 /** Renglón vacío para "+ Agregar presentación" (ej. una tercera fila "Caja"). */
 export function buildEmptyPresentation() {
   return { id: makePresentationId(), name: "", multiplier: "", price: "", barcode: "", locked: false, isBase: false };
+}
+
+/**
+ * Atributos de los `<input type="number">` de cantidad (stock, multiplicador,
+ * cantidad a vender/ajustar/comprar) según el tipo de unidad del producto —
+ * un solo lugar para no repetir "0.001"/"1" en cada formulario de
+ * Inventario, Almacén y Movimientos.
+ */
+export function qtyInputProps(unitType) {
+  return unitType === "peso"
+    ? { step: "0.001", min: "0.001" }
+    : { step: "1", min: "1" };
 }
 
 /**

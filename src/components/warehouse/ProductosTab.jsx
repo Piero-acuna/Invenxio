@@ -24,7 +24,7 @@ import { formatMoney } from "../../utils/currency";
 export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", whMode: "packs", packsPerCase: "", unitsPerPack: "", unitPrice: "" };
+  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", unitType: "unidad", whMode: "packs", packsPerCase: "", unitsPerPack: "", unitPrice: "" };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form,     setForm]     = useState(EMPTY_FORM);
@@ -45,6 +45,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
     const packsPerCase = p.packsPerCase ?? 1;
     setForm({
       ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", description: p.description || "", packName: p.packName || "",
+      unitType: p.unitType || "unidad",
       // Si el producto ya tiene el desglose guardado (0019_product_
       // presentations_and_case_breakdown.sql) se precarga tal cual. Si es
       // de antes de esa migración (solo pack_qty, sin desglose), se
@@ -65,27 +66,32 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
 
   async function handleSave() {
     if (!form.name.trim())              { setError("El nombre es obligatorio."); return; }
-    if (!form.packName.trim())          { setError('Indica el nombre de la unidad mayorista (ej: "Caja").'); return; }
-    if (form.whMode === "packs" && (!form.packsPerCase || Number(form.packsPerCase) <= 0)) { setError(`Indica cuántos packs trae la ${form.packName || "Caja"}.`); return; }
-    if (!form.unitsPerPack || Number(form.unitsPerPack) <= 0) {
-      setError(form.whMode === "packs" ? "Indica cuántas unidades trae cada pack." : `Indica cuántas unidades trae la ${form.packName || "Caja"}.`);
-      return;
+    const isPeso = form.unitType === "peso";
+    if (!isPeso) {
+      if (!form.packName.trim())          { setError('Indica el nombre de la unidad mayorista (ej: "Caja").'); return; }
+      if (form.whMode === "packs" && (!form.packsPerCase || Number(form.packsPerCase) <= 0)) { setError(`Indica cuántos packs trae la ${form.packName || "Caja"}.`); return; }
+      if (!form.unitsPerPack || Number(form.unitsPerPack) <= 0) {
+        setError(form.whMode === "packs" ? "Indica cuántas unidades trae cada pack." : `Indica cuántas unidades trae la ${form.packName || "Caja"}.`);
+        return;
+      }
     }
     setError(""); setSaving(true);
     try {
-      const packsPerCase = form.whMode === "packs" ? Number(form.packsPerCase) : 1;
-      const unitsPerPack = Number(form.unitsPerPack);
+      const packName = isPeso ? "Kg" : form.packName.trim();
+      const packsPerCase = isPeso ? 1 : (form.whMode === "packs" ? Number(form.packsPerCase) : 1);
+      const unitsPerPack = isPeso ? 1 : Number(form.unitsPerPack);
       const payload = {
         name: form.name.trim(),
         sku: form.sku.trim(),
         description: form.description.trim(),
-        packName: form.packName.trim(),
-        packQty: calcUnitsPerCase(packsPerCase, unitsPerPack),
+        packName,
+        packQty: isPeso ? 1 : calcUnitsPerCase(packsPerCase, unitsPerPack),
         // Desglose informativo — packQty (arriba) sigue siendo la única
         // cifra que usan las RPC de almacén (ver 0019_product_
         // presentations_and_case_breakdown.sql).
         packsPerCase, unitsPerPack,
         unitPrice: form.unitPrice ? Number(form.unitPrice) : null,
+        unitType: form.unitType,
       };
       await updateWarehouseProduct(companyId, editItem.id, payload);
       setShowForm(false); setEditItem(null); setForm(EMPTY_FORM);
@@ -165,6 +171,32 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
               <input value={form.sku} onChange={e => setF("sku", e.target.value)} placeholder="Opcional"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
+            {/* ¿Cómo se vende? — "peso" es para granel a balanza (arroz,
+                azúcar...): no hay jerarquía Caja→Packs→Unidades, así que se
+                simplifica a un precio por Kg. El stock existente NO se
+                convierte solo — si ya tenía stock en "Cajas" y cambias a
+                Peso, ajústalo después con "Agregar Stock" en Kg. */}
+            <div className="col-span-2">
+              <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">¿Cómo se vende?</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[{ v: "unidad", l: "Por Cajas/Packs" }, { v: "peso", l: "Por Peso (Kg)" }].map(opt => (
+                  <button key={opt.v} type="button" onClick={() => setF("unitType", opt.v)}
+                    className={`py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                      form.unitType === opt.v ? "bg-amber-500 border-amber-500 text-slate-900" : "bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600"
+                    }`}>
+                    {opt.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {form.unitType === "peso" ? (
+              <div className="col-span-2 sm:col-span-1">
+                <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Precio por Kg ({currencySymbol})</label>
+                <input type="number" min="0" step="0.01" value={form.unitPrice} onChange={e => setF("unitPrice", e.target.value)} placeholder="0.00"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
+              </div>
+            ) : (
+            <>
             <div>
               <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Nombre de unidad mayorista *</label>
               <input value={form.packName} onChange={e => setF("packName", e.target.value)} placeholder="Ej: Caja"
@@ -225,6 +257,8 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
               <input type="number" min="0" step="0.01" value={form.unitPrice} onChange={e => setF("unitPrice", e.target.value)} placeholder="0.00"
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"/>
             </div>
+            </>
+            )}
             <div className="col-span-2">
               <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 block">Descripción</label>
               <p className="text-[10px] text-slate-600 mb-1">Se muestra en Compra/Venta a Proveedor y en el comprobante</p>
@@ -295,8 +329,10 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
                   </div>
                 </div>
                 <p className="text-[11px] text-amber-400/80">
-                  📦 {p.packsPerCase > 1 ? `${p.packName} = ${p.packsPerCase} packs × ${p.unitsPerPack} und = ${p.packQty} und` : `${p.packName} × ${p.packQty} und`}
-                  {Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} por ${p.packName}` : ""}
+                  📦 {p.unitType === "peso"
+                    ? "A granel — Kg"
+                    : p.packsPerCase > 1 ? `${p.packName} = ${p.packsPerCase} packs × ${p.unitsPerPack} und = ${p.packQty} und` : `${p.packName} × ${p.packQty} und`}
+                  {Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} ${p.unitType === "peso" ? "por Kg" : `por ${p.packName}`}` : ""}
                 </p>
                 {p.description && <p className="text-[11px] text-slate-500 line-clamp-2">{p.description}</p>}
 

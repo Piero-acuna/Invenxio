@@ -247,6 +247,9 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
                     {form.storeProduct.name?.trim().toLowerCase() !== form.product?.name?.trim().toLowerCase() && (
                       <p className="text-[11px] text-amber-400 flex items-center gap-1"><AlertTriangle size={11}/> El nombre no coincide exactamente con "{form.product?.name}". Verifica que sea el producto correcto.</p>
                     )}
+                    {form.product?.unitType === "peso" && form.storeProduct.unitType !== "peso" && (
+                      <p className="text-[11px] text-red-400 flex items-center gap-1"><AlertTriangle size={11}/> "{form.product.name}" es por Peso (Kg) en Almacén, pero "{form.storeProduct.name}" en Tienda es por Unidad. Los Kg se sumarían como si fueran unidades — edítalo en Inventario para que también sea "Por Peso" antes de enviar.</p>
+                    )}
                   </div>
                 )}
                 {storeFiltered.length > 0 && !form.storeProduct && (
@@ -273,18 +276,21 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
             </div>
           )}
 
-          {/* Cantidad — siempre en empaques (cajas), tanto para Traslado como
-              para Enviar a Tienda (en este último se convierte a unidades
-              reales para la tienda, ver preview abajo). */}
+          {/* Cantidad — normalmente en empaques (cajas), tanto para Traslado
+              como para Enviar a Tienda (se convierte a unidades reales para
+              la tienda, ver preview abajo). Productos por Peso (Kg a
+              granel, ver 0021_unit_type_peso.sql): no hay "empaques", la
+              cantidad ES directamente el peso — admite decimales. */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider mb-1 block">
-                Cantidad de {packName} {form.product ? `(${packQty} und c/u)` : ""} *
+                {form.product?.unitType === "peso" ? "Cantidad (Kg) *" : `Cantidad de ${packName} ${form.product ? `(${packQty} und c/u)` : ""} *`}
               </label>
-              {form.product?.packsPerCase > 1 && (
+              {form.product?.unitType !== "peso" && form.product?.packsPerCase > 1 && (
                 <p className="text-[10px] text-slate-500 mb-1">1 {packName} = {form.product.packsPerCase} packs × {form.product.unitsPerPack} und</p>
               )}
-              <input type="number" min="1" value={form.qty} onChange={e => setF("qty", e.target.value)} placeholder="Ej: 3"
+              <input type="number" min={form.product?.unitType === "peso" ? "0.001" : "1"} step={form.product?.unitType === "peso" ? "0.001" : "1"}
+                value={form.qty} onChange={e => setF("qty", e.target.value)} placeholder={form.product?.unitType === "peso" ? "Ej: 12.500" : "Ej: 3"}
                 className="w-full px-3 py-2.5 bg-slate-900 border border-amber-500/30 rounded-lg text-sm text-amber-300 font-mono placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors" />
             </div>
             <div>
@@ -296,15 +302,22 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
 
           {/* Preview de conversión caja → unidades en "Enviar a Tienda" —
               si la caja tiene el desglose Packs/Unidades guardado, se
-              muestra completo (ej. 2 Cajas = 20 packs × 6 und = 120 und). */}
+              muestra completo (ej. 2 Cajas = 20 packs × 6 und = 120 und).
+              Por Peso: no hay conversión real (1 Kg de almacén = 1 Kg en la
+              tienda), así que se muestra un texto simple en vez de la
+              fórmula "× 1 und" que se leería rara para kilos. */}
           {isEnvio && packCount > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
               <span>📦</span>
-              <span>
-                <strong>{packCount}</strong> {packName}
-                {form.product?.packsPerCase > 1 && <> = <strong>{packCount * form.product.packsPerCase}</strong> packs × <strong>{form.product.unitsPerPack}</strong> und</>}
-                {" "}× <strong>{packQty}</strong> und = se suman <strong className="text-amber-400">{unitQty}</strong> unidades al stock de la tienda
-              </span>
+              {form.product?.unitType === "peso" ? (
+                <span>Se suman <strong className="text-amber-400">{unitQty}</strong> Kg al stock de la tienda.</span>
+              ) : (
+                <span>
+                  <strong>{packCount}</strong> {packName}
+                  {form.product?.packsPerCase > 1 && <> = <strong>{packCount * form.product.packsPerCase}</strong> packs × <strong>{form.product.unitsPerPack}</strong> und</>}
+                  {" "}× <strong>{packQty}</strong> und = se suman <strong className="text-amber-400">{unitQty}</strong> unidades al stock de la tienda
+                </span>
+              )}
             </div>
           )}
 
