@@ -860,7 +860,7 @@ const InventoryModule = ({
                   { label: "Stock Actual",  value: selectedProduct.unitType === "peso" ? `${selectedProduct.stock} kg` : selectedProduct.stock, mono: true,  color: selectedProduct.stock === 0 ? "text-red-400" : selectedProduct.stock <= selectedProduct.minStock ? "text-amber-400" : "text-emerald-400" },
                   { label: "Stock Mínimo",  value: selectedProduct.unitType === "peso" ? `${selectedProduct.minStock} kg` : selectedProduct.minStock, mono: true,  color: "text-slate-300" },
                   { label: "Costo de Venta", value: `${formatMoney(selectedProduct.price, currencySymbol)}`, mono: true, color: "text-slate-300" },
-                  ...(canViewFinance ? [{ label: "Costo de Compra", value: `${formatMoney(selectedProduct.cost, currencySymbol)}`, mono: true, color: "text-slate-300" }] : []),
+                  ...(canViewFinance ? [{ label: selectedProduct.unitType === "peso" ? "Costo de Compra (por Kg)" : "Costo de Compra", value: `${formatMoney(selectedProduct.cost, currencySymbol)}`, mono: true, color: "text-slate-300" }] : []),
                 ].map((item, i) => (
                   <div key={i} className="bg-slate-800/60 rounded-lg p-3 border border-slate-700/50">
                     <p className="text-xs text-slate-400 mb-1">{item.label}</p>
@@ -1115,14 +1115,14 @@ const InventoryModule = ({
                         <p className="text-[10px] text-slate-500 uppercase tracking-wider">Costo</p>
                         <div>
                           <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
-                          <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor, por unidad</p>
+                          <p className="text-[10px] text-slate-500 mb-1.5">{newProd.unitType === "peso" ? "Lo que paga al proveedor, por Kg (el mismo costo con el que se compra al por mayor, ej. el precio del saco ÷ sus Kg)" : "Lo que paga al proveedor, por unidad"}</p>
                           <input type="number" min="0" step="0.01" value={newProd.cost} onChange={e => setNewProd(p => ({ ...p, cost: e.target.value }))} placeholder="0.00"
                             className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 transition-colors" />
                         </div>
-                        {/* Margen calculado en tiempo real sobre el precio de "Unidad" (ver src/utils/finance.js) */}
+                        {/* Margen calculado en tiempo real sobre el precio de "Unidad"/"Kg" (ver src/utils/finance.js) */}
                         {basePrice > 0 && cost > 0 && (
                           <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
-                            <span className="text-slate-400">Ganancia por unidad</span>
+                            <span className="text-slate-400">{newProd.unitType === "peso" ? "Ganancia por Kg" : "Ganancia por unidad"}</span>
                             <div className="text-right">
                               <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>{formatMoney(profit, currencySymbol)}</span>
                               <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>
@@ -1421,13 +1421,13 @@ const InventoryModule = ({
                     <p className="text-[10px] text-slate-500 uppercase tracking-wider">Costo</p>
                     <div>
                       <label className="text-xs font-semibold text-sky-400 mb-0.5 block">Costo de Compra ({currencySymbol})</label>
-                      <p className="text-[10px] text-slate-500 mb-1.5">Lo que paga al proveedor, por unidad</p>
+                      <p className="text-[10px] text-slate-500 mb-1.5">{editForm.unitType === "peso" ? "Lo que paga al proveedor, por Kg" : "Lo que paga al proveedor, por unidad"}</p>
                       <input type="number" min="0" step="0.01" value={editForm.cost} onChange={e => setEditForm(p => ({ ...p, cost: e.target.value }))}
                         className="w-full px-3 py-2 bg-slate-900 border border-sky-500/30 rounded-lg text-sm text-sky-300 font-mono focus:outline-none focus:border-sky-500 transition-colors" />
                     </div>
                     {basePrice > 0 && cost > 0 && (
                       <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${margin >= 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
-                        <span className="text-slate-400">Ganancia por unidad</span>
+                        <span className="text-slate-400">{editForm.unitType === "peso" ? "Ganancia por Kg" : "Ganancia por unidad"}</span>
                         <div className="text-right">
                           <span className={`font-mono font-bold ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>{formatMoney(profit, currencySymbol)}</span>
                           <span className={`ml-2 ${margin >= 0 ? "text-amber-400" : "text-red-400"}`}>({margin.toFixed(1)}% margen)</span>

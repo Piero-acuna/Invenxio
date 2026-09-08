@@ -19,6 +19,12 @@ export default function SupplierPurchaseTab({
 }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
+  // Comprar "Por Empaque (Almacén)" un producto que en Almacén está
+  // configurado "Por Peso (Kg)" (ver ProductosTab.jsx / 0021_unit_type_peso)
+  // no mueve cajas/packs enteros sino Kilogramos con decimales — mismo
+  // criterio que AddStockModal.jsx para no perder los gramos comprados.
+  const isPesoPurchase = pForm.buyMode === "empaque" && pForm.product?.unitType === "peso";
+  const qtyLabel = pForm.buyMode === "unidad" ? "unidades" : (pForm.product?.packName || "empaques");
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
@@ -97,7 +103,11 @@ export default function SupplierPurchaseTab({
                 {pFiltered.length > 0 && !pForm.product && (
                   <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
                     {pFiltered.slice(0, 5).map(p => {
-                      const totalStock = pForm.buyMode === "unidad" ? p.stock : (stockByProduct[p.id] || []).reduce((s, i) => s + (i.qty || 0), 0);
+                      const rawStock = pForm.buyMode === "unidad" ? p.stock : (stockByProduct[p.id] || []).reduce((s, i) => s + (i.qty || 0), 0);
+                      // Redondeo a 3 decimales solo para mostrar — evita
+                      // arrastrar errores de punto flotante (ej. 24.999999999)
+                      // en el stock de productos "Por Peso (Kg)".
+                      const totalStock = p.unitType === "peso" ? Math.round(rawStock * 1000) / 1000 : rawStock;
                       return (
                         <button key={p.id} onClick={() => setPForm(prev => ({ ...prev, product: p, productSearch: p.name, locationId: "" }))}
                           className="w-full text-left px-3 py-2 hover:bg-slate-700 flex flex-col gap-0.5">
@@ -130,13 +140,19 @@ export default function SupplierPurchaseTab({
             )}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Cantidad de {pForm.buyMode === "unidad" ? "unidades" : (pForm.product?.packName || "empaques")} *</label>
-                <input type="number" value={pForm.packCount} onChange={e => setPForm(p => ({ ...p, packCount: e.target.value }))} min="1" placeholder="0"
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">
+                  {isPesoPurchase ? "Cantidad (Kg)" : `Cantidad de ${qtyLabel}`} *
+                </label>
+                <input type="number" value={pForm.packCount} onChange={e => setPForm(p => ({ ...p, packCount: e.target.value }))}
+                  min={isPesoPurchase ? "0.001" : "1"} step={isPesoPurchase ? "0.001" : "1"} placeholder={isPesoPurchase ? "Ej: 25.500" : "0"}
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                {isPesoPurchase && <p className="text-[10px] text-slate-500 mt-1">Admite decimales, ej. 25.500 kg.</p>}
               </div>
               <div>
-                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Costo por {pForm.buyMode === "unidad" ? "unidad" : (pForm.product?.packName || "empaque")} ({currencySymbol}) *</label>
-                <input type="number" value={pForm.unitCost} onChange={e => setPForm(p => ({ ...p, unitCost: e.target.value }))} min="0" placeholder="0.00"
+                <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">
+                  Costo por {isPesoPurchase ? "Kg" : (pForm.buyMode === "unidad" ? "unidad" : (pForm.product?.packName || "empaque"))} ({currencySymbol}) *
+                </label>
+                <input type="number" value={pForm.unitCost} onChange={e => setPForm(p => ({ ...p, unitCost: e.target.value }))} min="0" step="0.01" placeholder="0.00"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
               </div>
             </div>
