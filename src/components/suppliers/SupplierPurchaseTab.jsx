@@ -19,12 +19,13 @@ export default function SupplierPurchaseTab({
 }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  // Comprar "Por Empaque (Almacén)" un producto que en Almacén está
-  // configurado "Por Peso (Kg)" (ver ProductosTab.jsx / 0021_unit_type_peso)
-  // no mueve cajas/packs enteros sino Kilogramos con decimales — mismo
-  // criterio que AddStockModal.jsx para no perder los gramos comprados.
-  const isPesoPurchase = pForm.buyMode === "empaque" && pForm.product?.unitType === "peso";
-  const qtyLabel = pForm.buyMode === "unidad" ? "unidades" : (pForm.product?.packName || "empaques");
+  // Comprar "Por Empaque" o "Por Kg" (Almacén) son ambos destino ALMACÉN —
+  // difieren en la unidad de compra: cajas/packs enteros vs. Kilogramos con
+  // decimales (ver ProductosTab.jsx / 0021_unit_type_peso, y
+  // AddStockModal.jsx que usa el mismo criterio para no perder los gramos).
+  const isKgMode = pForm.buyMode === "kg" || pForm.product?.unitType === "peso";
+  const isWarehouseMode = pForm.buyMode === "empaque" || pForm.buyMode === "kg";
+  const qtyLabel = pForm.buyMode === "unidad" ? "unidades" : (pForm.product?.packName || (isKgMode ? "Kg" : "empaques"));
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
@@ -53,9 +54,10 @@ export default function SupplierPurchaseTab({
             </div>
             <div>
               <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Comprar…</label>
-              <div className="flex gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {[
                   { id: "empaque", label: "Por Empaque (Almacén)" },
+                  { id: "kg",      label: "Por Kg (Almacén)" },
                   { id: "unidad",  label: "Por Unidad (Inventario)" },
                 ].map(opt => (
                   <button key={opt.id} type="button"
@@ -128,7 +130,7 @@ export default function SupplierPurchaseTab({
                 )}
               </div>
             </div>
-            {pForm.buyMode === "empaque" && pForm.product && (
+            {isWarehouseMode && pForm.product && (
               <div>
                 <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Ubicación destino *</label>
                 <select value={pForm.locationId} onChange={e => setPForm(p => ({ ...p, locationId: e.target.value }))}
@@ -141,16 +143,16 @@ export default function SupplierPurchaseTab({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">
-                  {isPesoPurchase ? "Cantidad (Kg)" : `Cantidad de ${qtyLabel}`} *
+                  {isKgMode ? "Cantidad (Kg)" : `Cantidad de ${qtyLabel}`} *
                 </label>
                 <input type="number" value={pForm.packCount} onChange={e => setPForm(p => ({ ...p, packCount: e.target.value }))}
-                  min={isPesoPurchase ? "0.001" : "1"} step={isPesoPurchase ? "0.001" : "1"} placeholder={isPesoPurchase ? "Ej: 25.500" : "0"}
+                  min={isKgMode ? "0.001" : "1"} step={isKgMode ? "0.001" : "1"} placeholder={isKgMode ? "Ej: 25.500" : "0"}
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                {isPesoPurchase && <p className="text-[10px] text-slate-500 mt-1">Admite decimales, ej. 25.500 kg.</p>}
+                {isKgMode && <p className="text-[10px] text-slate-500 mt-1">Admite decimales, ej. 25.500 kg.</p>}
               </div>
               <div>
                 <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">
-                  Costo por {isPesoPurchase ? "Kg" : (pForm.buyMode === "unidad" ? "unidad" : (pForm.product?.packName || "empaque"))} ({currencySymbol}) *
+                  Costo por {isKgMode ? "Kg" : (pForm.buyMode === "unidad" ? "unidad" : (pForm.product?.packName || "empaque"))} ({currencySymbol}) *
                 </label>
                 <input type="number" value={pForm.unitCost} onChange={e => setPForm(p => ({ ...p, unitCost: e.target.value }))} min="0" step="0.01" placeholder="0.00"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
@@ -171,7 +173,7 @@ export default function SupplierPurchaseTab({
               <div className="py-3 px-4 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-center text-emerald-400 font-semibold flex items-center justify-center gap-2"><CheckCircle size={16} />¡Guardado!</div>
             ) : (
               <button onClick={onSubmit}
-                disabled={!pForm.supplier || !pForm.product || !pForm.packCount || !pForm.unitCost || (pForm.buyMode === "empaque" && !pForm.locationId) || pSaving}
+                disabled={!pForm.supplier || !pForm.product || !pForm.packCount || !pForm.unitCost || (isWarehouseMode && !pForm.locationId) || pSaving}
                 className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-500 text-slate-900 font-bold rounded-xl transition-colors flex items-center justify-center gap-2">
                 {pSaving && <Loader2 size={16} className="animate-spin" />}<ArrowUpCircle size={16} />Registrar Compra (emite comprobante)
               </button>

@@ -99,19 +99,23 @@ const SuppliersModule = ({
   const [pSuccess, setPSuccess] = useState(false);
   const [pError,   setPError]   = useState("");
   const [pMsg,     setPMsg]     = useState("");
-  // "Por Empaque" busca en el catálogo de ALMACÉN (warehouseProducts) — la
-  // compra entra como stock de almacén, en una ubicación.
+  // "Por Empaque" y "Por Kg" buscan en el catálogo de ALMACÉN
+  // (warehouseProducts) — la compra entra como stock de almacén, en una
+  // ubicación. Se filtra por unitType para que cada modo solo ofrezca los
+  // productos que se compran así (cajas/packs enteros vs. Kilogramos con
+  // decimales — ver ProductosTab.jsx / 0021_unit_type_peso).
   // "Por Unidad" busca en el catálogo de INVENTARIO (products, la tienda) —
   // la compra suma directo al stock de tienda, sin ubicación.
   const pFiltered = pForm.productSearch && !pForm.product
     ? (pForm.buyMode === "unidad" ? products : warehouseProducts)
+        .filter(p => pForm.buyMode === "kg" ? p.unitType === "peso" : pForm.buyMode === "empaque" ? p.unitType !== "peso" : true)
         .filter(p => p.name?.toLowerCase().includes(pForm.productSearch.toLowerCase()))
     : [];
 
   const handleSupplierPurchase = async () => {
     setPError(""); setPMsg("");
     if (!pForm.supplier || !pForm.product || !pForm.packCount || !pForm.unitCost) return;
-    if (pForm.buyMode === "empaque" && !pForm.locationId) return;
+    if (pForm.buyMode !== "unidad" && !pForm.locationId) return;
     setPSaving(true);
     try {
       const sup  = suppliers.find(s => s.name === pForm.supplier);
