@@ -19,7 +19,7 @@ import {
   getNextInvoiceNumber,
 } from "../services/firestoreService";
 import { exportToExcel } from "../utils/exportExcel";
-import { generateInvoicePDF } from "../utils/generateInvoicePDF";
+import { emitReceiptDocument } from "../utils/emitReceiptDocument";
 import { logAndGetErrorMessage } from "../utils/errors";
 import {
   getBaseProductName, buildDuplicateProductName,
@@ -367,7 +367,7 @@ const SuppliersModule = ({
     }
     try {
       const invoiceNumber = await getNextInvoiceNumber(companyId);
-      generateInvoicePDF({
+      emitReceiptDocument({
         billing, docType: "PROVEEDOR", partyLabel: "Proveedor", operationType,
         partyName: partyName || "—", items, total, note: note || "", invoiceNumber,
         currencySymbol,

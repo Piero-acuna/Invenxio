@@ -10,7 +10,7 @@ import {
   Minus, Trash2, Zap, Clock, BookOpen, Loader2, ScanBarcode,
 } from "lucide-react";
 import { recordSale, getNextInvoiceNumber } from "../services/firestoreService";
-import { generateInvoicePDF } from "../utils/generateInvoicePDF";
+import { emitReceiptDocument } from "../utils/emitReceiptDocument";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { useCollection } from "../hooks/useCollection";
 import { StatusBadge, Spinner } from "../components/shared/StatusUI";
@@ -228,7 +228,7 @@ const MovementsModule = ({
       } else {
         try {
           const invoiceNumber = await getNextInvoiceNumber(companyId);
-          generateInvoicePDF({
+          emitReceiptDocument({
             billing,
             docType: "VENTA",
             partyLabel: "Cliente",

@@ -7,7 +7,7 @@
 import { useState, useMemo } from "react";
 import {
   Search, ArrowUpCircle, ArrowDownCircle, BarChart2, TrendingUp,
-  FileSpreadsheet, FileDown,
+  FileSpreadsheet, FileDown, Printer,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -15,7 +15,8 @@ import {
 } from "recharts";
 import { getNextInvoiceNumber } from "../services/firestoreService";
 import { exportToExcel } from "../utils/exportExcel";
-import { generateInvoicePDF } from "../utils/generateInvoicePDF";
+import { emitReceiptDocument } from "../utils/emitReceiptDocument";
+import { printThermalReceipt } from "../utils/printThermalReceipt";
 import { Spinner } from "./shared/StatusUI";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
@@ -338,51 +339,78 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
     exportToExcel(rows, "Invenxio_Historial_Movimientos", "Movimientos");
   }
 
-  // Genera (o re-imprime) el comprobante PDF de una transacción individual.
-  // Solo disponible si el usuario tiene ver_metricas_financieras (necesitamos
-  // montos) y si el Dueño completó sus Datos de Facturación.
+  // Arma los parámetros del comprobante de una transacción (compartido por
+  // el reimpreso "por defecto" y el botón explícito de impresión térmica,
+  // para no duplicar la lógica de reconstrucción de ítems).
+  async function buildReceiptParams(t) {
+    const invoiceNumber = await getNextInvoiceNumber(companyId);
+    const raw = t.raw || t;
+    const isVenta = t.type === "venta";
+    const isVentaProveedor = t.type === "venta_proveedor";
+    // Una transacción puede tener múltiples ítems (carrito) o uno solo.
+    // Si se vendió por presentación (Pack/Caja…), se reconstruye la línea
+    // con la cantidad y precio REALES de esa presentación (ej. "2 Pack ×
+    // S/25.00"), no como "12 und" a un precio unitario derivado — mismo
+    // criterio que el comprobante original (ver handleSale en
+    // MovementsModule.jsx), para que un reimpreso se vea igual al que
+    // recibió el cliente la primera vez.
+    const items = raw.items?.length
+      ? raw.items.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price ?? i.unitPrice, total: (i.price ?? i.unitPrice) * i.qty }))
+      : t.presCount != null
+        ? [{
+            name: t.unit ? `${t.product || "—"} — ${t.unit}` : (t.product || "—"),
+            description: t.description || "", qty: t.presCount,
+            unitPrice: t.presCount > 0 ? (t.amount ?? 0) / t.presCount : 0, total: t.amount ?? 0,
+          }]
+        : [{ name: t.product || "—", description: t.description || "", qty: t.qty, unitPrice: raw.unitCost ?? raw.unitPrice ?? 0, total: t.amount ?? 0 }];
+    return {
+      billing,
+      docType:     isVenta ? "VENTA" : "PROVEEDOR",
+      operationType: (isVenta || isVentaProveedor) ? "venta" : "compra",
+      date:        raw.date || t.date,
+      partyLabel:  isVenta ? "Cliente" : "Proveedor",
+      partyName:   t.party || "—",
+      items,
+      total:       t.amount ?? 0,
+      invoiceNumber,
+      note:        t.note || "",
+      paymentMethod: isVenta ? t.paymentMethod : undefined,
+      currencySymbol,
+    };
+  }
+
+  // Genera (o re-imprime) el comprobante de una transacción individual, en
+  // el formato configurado por el Dueño en Panel → Facturación (PDF A4 o
+  // térmica — ver emitReceiptDocument.js). Solo disponible si el usuario
+  // tiene ver_metricas_financieras (necesitamos montos) y si el Dueño
+  // completó sus Datos de Facturación.
   async function handleReprint(t) {
     if (!billing?.razonSocial) {
       alert("Para generar comprobantes, el Dueño debe completar los Datos de Facturación en el Panel → Facturación.");
       return;
     }
     try {
-      const invoiceNumber = await getNextInvoiceNumber(companyId);
-      const raw = t.raw || t;
-      const isVenta = t.type === "venta";
-      const isVentaProveedor = t.type === "venta_proveedor";
-      // Una transacción puede tener múltiples ítems (carrito) o uno solo.
-      // Si se vendió por presentación (Pack/Caja…), se reconstruye la línea
-      // con la cantidad y precio REALES de esa presentación (ej. "2 Pack ×
-      // S/25.00"), no como "12 und" a un precio unitario derivado — mismo
-      // criterio que el comprobante original (ver handleSale en
-      // MovementsModule.jsx), para que un reimpreso se vea igual al que
-      // recibió el cliente la primera vez.
-      const items = raw.items?.length
-        ? raw.items.map(i => ({ name: i.name, description: i.description || "", qty: i.qty, unitPrice: i.price ?? i.unitPrice, total: (i.price ?? i.unitPrice) * i.qty }))
-        : t.presCount != null
-          ? [{
-              name: t.unit ? `${t.product || "—"} — ${t.unit}` : (t.product || "—"),
-              description: t.description || "", qty: t.presCount,
-              unitPrice: t.presCount > 0 ? (t.amount ?? 0) / t.presCount : 0, total: t.amount ?? 0,
-            }]
-          : [{ name: t.product || "—", description: t.description || "", qty: t.qty, unitPrice: raw.unitCost ?? raw.unitPrice ?? 0, total: t.amount ?? 0 }];
-      generateInvoicePDF({
-        billing,
-        docType:     isVenta ? "VENTA" : "PROVEEDOR",
-        operationType: (isVenta || isVentaProveedor) ? "venta" : "compra",
-        date:        raw.date || t.date,
-        partyLabel:  isVenta ? "Cliente" : "Proveedor",
-        partyName:   t.party || "—",
-        items,
-        total:       t.amount ?? 0,
-        invoiceNumber,
-        note:        t.note || "",
-        paymentMethod: isVenta ? t.paymentMethod : undefined,
-        currencySymbol,
-      });
+      const params = await buildReceiptParams(t);
+      emitReceiptDocument(params);
     } catch (err) {
       console.error("Error al generar comprobante:", err);
+    }
+  }
+
+  // Fuerza el formato térmico para este reimpreso puntual, sin importar
+  // cuál sea el formato por defecto guardado en Panel → Facturación — útil
+  // para imprimir en el rollo una venta puntual aunque el default de la
+  // empresa sea PDF A4 (o al revés).
+  async function handleReprintThermal(t) {
+    if (!billing?.razonSocial) {
+      alert("Para generar comprobantes, el Dueño debe completar los Datos de Facturación en el Panel → Facturación.");
+      return;
+    }
+    try {
+      const params = await buildReceiptParams(t);
+      printThermalReceipt({ ...params, width: billing?.printFormat === "termica_58" ? "58mm" : "80mm" });
+    } catch (err) {
+      console.error("Error al imprimir comprobante térmico:", err);
     }
   }
 
@@ -641,13 +669,22 @@ const TransactionHistory = ({ transactions: rawTransactions, warehouseMovements 
                       <td className="py-2.5 px-3 hidden md:table-cell text-slate-400">{t.party}</td>
                       <td className="py-2.5 px-3 text-center">
                         {canReprint && (
-                          <button
-                            onClick={() => handleReprint(t)}
-                            title="Descargar comprobante PDF"
-                            className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-700 rounded-lg transition-colors"
-                          >
-                            <FileDown size={13} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => handleReprint(t)}
+                              title={billing?.printFormat?.startsWith("termica") ? "Imprimir comprobante (formato configurado)" : "Descargar comprobante PDF"}
+                              className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-700 rounded-lg transition-colors"
+                            >
+                              <FileDown size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleReprintThermal(t)}
+                              title="Imprimir en térmica"
+                              className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-700 rounded-lg transition-colors"
+                            >
+                              <Printer size={13} />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>

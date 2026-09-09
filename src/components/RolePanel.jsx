@@ -536,6 +536,7 @@ function BillingTab({ billing, onSave }) {
     telefono:    billing?.telefono    || "",
     email:       billing?.email       || "",
     serie:       billing?.serie       || "F001",
+    printFormat: billing?.printFormat || "a4",
   }));
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
@@ -562,6 +563,7 @@ function BillingTab({ billing, onSave }) {
         telefono:    billing?.telefono    || "",
         email:       billing?.email       || "",
         serie:       billing?.serie       || "F001",
+        printFormat: billing?.printFormat || "a4",
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -613,6 +615,36 @@ function BillingTab({ billing, onSave }) {
       <div className="grid grid-cols-2 gap-2">
         <FieldMini label="Teléfono" value={form.telefono} onChange={v => set("telefono", v)} placeholder="987 654 321" />
         <FieldMini label="Email" value={form.email} onChange={v => set("email", v)} placeholder="contacto@negocio.com" type="email" />
+      </div>
+
+      <div>
+        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Formato de impresión</label>
+        <div className="grid grid-cols-3 gap-1.5">
+          {[
+            { id: "a4",         label: "PDF (A4)" },
+            { id: "termica_80", label: "Térmica 80mm" },
+            { id: "termica_58", label: "Térmica 58mm" },
+          ].map(opt => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => set("printFormat", opt.id)}
+              className={`px-2 py-2 rounded-lg text-[11px] font-semibold border transition-colors ${
+                form.printFormat === opt.id
+                  ? "bg-amber-500 border-amber-500 text-slate-900"
+                  : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-500 mt-1.5 leading-snug">
+          "Térmica" imprime un ticket angosto con el diálogo de impresión del navegador — funciona con cualquier
+          impresora de tickets que el dispositivo reconozca como impresora (USB/Bluetooth con su driver, o apps
+          puente como RawBT en Android). En cualquier momento se puede reimprimir un comprobante puntual en el otro
+          formato desde Historial.
+        </p>
       </div>
 
       <button
