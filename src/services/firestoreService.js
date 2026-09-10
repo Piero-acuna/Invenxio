@@ -29,6 +29,7 @@
 //   ./firestore/transactions.js  → registrar compras y ventas (log inmutable)
 //   ./firestore/supplierSales.js → ventas de almacén a proveedores + cancelación
 //   ./firestore/warehouse.js     → ubicaciones, stock, movimientos, catálogo de almacén
+//   ./firestore/expiryLots.js    → lotes de caducidad (Inventario + Almacén), ver 0023
 //
 // Para agregar una función nueva: ponla en el dominio que corresponda dentro
 // de ./firestore/ y agrega su export acá abajo. Si no encaja en ningún
@@ -85,6 +86,13 @@ export {
   updateSupplierSaleStatus,
   cancelSupplierSale,
 } from "./firestore/supplierSales";
+
+export {
+  addExpiryLot,
+  updateExpiryLot,
+  deleteExpiryLot,
+  syncExpiryLots,
+} from "./firestore/expiryLots";
 
 export {
   subscribeToLocations,

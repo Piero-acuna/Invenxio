@@ -13,6 +13,7 @@ import {
 import {
   addProduct, updateProduct, deleteProduct, adjustProductStock, recordPurchase,
   subscribeToProductHistory, addWarehouseProduct, addWarehouseMovement, recordWarehousePurchase,
+  addExpiryLot, syncExpiryLots,
 } from "../services/firestoreService";
 import { logAndGetErrorMessage } from "../utils/errors";
 import { StatusBadge, Spinner, STOCK_STATUS } from "../components/shared/StatusUI";
@@ -79,6 +80,8 @@ const WAREHOUSE_IMPORT_EXAMPLE = [
   { "Nombre": "Galleta de Chocolate", "SKU / Código": "", "Nombre de Unidad de Empaque": "Caja", "Unidades por Empaque": "", "Packs por Caja": 10, "Unidades por Pack": 6, "Precio de cada Empaque": 45, "Cantidad de Empaques": 8, "Descripción": "", "Ubicación": "Zona A" },
 ];
 import { calcProfit, calcMarginPercent } from "../utils/finance";
+import { getExpirySummary, getExpiryLabel, getExpiryBadgeClass, groupLotsByProduct } from "../utils/expiry";
+import ExpiryLotsEditor, { newEmptyLot } from "../components/shared/ExpiryLotsEditor";
 import {
   calcUnitsPerCase, buildDefaultPresentations, makePresentationId,
   validatePresentations, deriveLegacyFieldsFromPresentations,
@@ -92,13 +95,17 @@ import PresentationsEditor from "../components/inventory/PresentationsEditor";
 const InventoryModule = ({
   companyId, userName, canCreate, canEdit, canDelete, canViewFinance, canManageWarehouse,
   products, loadingProducts: loadingP, suppliers, locations = [], warehouseProducts = [],
+  expiryLots = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
   // "products" y "suppliers" YA NO se suscriben acá — llegan como prop
   // desde InventorySystem.jsx (compartidos también con el Dashboard), en
   // vez de que este módulo abra su propia suscripción independiente a
-  // exactamente los mismos datos.
+  // exactamente los mismos datos. `expiryLots` (0023_product_expiry_lots.sql)
+  // llega igual, ya filtrable por catalog — acá se usan solo los de
+  // catalog:"inventario" (los de "almacen" los usa ProductosTab.jsx).
+  const lotsByProduct = useMemo(() => groupLotsByProduct(expiryLots, "inventario"), [expiryLots]);
 
   const [search,          setSearch]          = useState("");
   const [statusFilter,    setStatusFilter]    = useState("Todos");
@@ -107,6 +114,8 @@ const InventoryModule = ({
     () => products.find(p => p.id === selectedProductId) ?? null,
     [products, selectedProductId]
   );
+  const selectedExpiryLots = selectedProduct ? (lotsByProduct[selectedProduct.id] || []) : [];
+  const selectedExpirySummary = getExpirySummary(selectedExpiryLots);
   const [adjustQty,       setAdjustQty]       = useState("");
   const [adjustType,      setAdjustType]      = useState("add");
   const [adjusting,       setAdjusting]       = useState(false);
@@ -164,6 +173,12 @@ const InventoryModule = ({
     // packaging.js), para no romper el resto de la app mientras no se migra
     // a leer `presentations` directamente.
     cost: "", stock: "", minStock: "4",
+    // Lotes de caducidad — 0, 1 o varios, ninguno obligatorio (ver
+    // 0023_product_expiry_lots.sql / ExpiryLotsEditor.jsx). Compartido
+    // entre Inventario y Almacén por el mismo motivo que name/sku/
+    // description (solo un destino activo a la vez); se insertan recién
+    // después de crear el producto (necesitan su id).
+    expiryLots: [],
     // unitType: "unidad" (cuenta discreta, de siempre) | "peso" (se vende
     // por Kg — azúcar, arroz a granel, etc. — admite decimales en stock,
     // multiplicador y cantidad vendida; ver 0021_unit_type_peso.sql).
@@ -193,6 +208,9 @@ const InventoryModule = ({
   // Editar producto
   const [editProd,    setEditProd]    = useState(null);
   const [editForm,    setEditForm]    = useState({});
+  // "Lo que había" al abrir el editor de lotes de caducidad — se compara
+  // contra editForm.expiryLots al Guardar para saber qué se borró.
+  const [originalExpiryLots, setOriginalExpiryLots] = useState([]);
   const [editSaving,  setEditSaving]  = useState(false);
   const [editError,   setEditError]   = useState("");
 
@@ -447,6 +465,7 @@ const InventoryModule = ({
 
   const openEdit = (p, e) => {
     e.stopPropagation();
+    const currentLots = (lotsByProduct[p.id] || []).map(l => ({ id: l.id, entryDate: l.entryDate || "", expiryDate: l.expiryDate || "", qty: l.qty ?? "" }));
     setEditForm({
       name: p.name || "",
       sku: p.sku || "",
@@ -456,7 +475,11 @@ const InventoryModule = ({
       minStock: p.minStock ?? 4,
       unitType: p.unitType || "unidad",
       presentations: toEditablePresentations(p),
+      expiryLots: currentLots,
     });
+    // Copia aparte de "lo que había antes de abrir el editor" — para poder
+    // detectar al Guardar qué lotes se borraron (ver syncExpiryLots).
+    setOriginalExpiryLots(currentLots);
     setEditProd(p);
     setEditError("");
   };
@@ -540,6 +563,13 @@ const InventoryModule = ({
           unitPrice: newProd.whUnitPrice ? Number(newProd.whUnitPrice) : null,
           unitType: newProd.whUnitType,
         });
+        await Promise.all(
+          newProd.expiryLots.filter(l => l.expiryDate).map(l => addExpiryLot(companyId, {
+            catalog: "almacen", productId: newWhProductId,
+            entryDate: l.entryDate || null, expiryDate: l.expiryDate,
+            qty: l.qty !== "" && l.qty != null ? Number(l.qty) : null,
+          }))
+        );
         await addWarehouseMovement(companyId, {
           type: "entrada",
           productId: newWhProductId, productName: newProd.name, sku: newProd.sku || nextWhSku,
@@ -553,6 +583,7 @@ const InventoryModule = ({
         setNewProd(p => ({
           ...p, name: "", sku: nextWhSku, description: "",
           whMode: "packs", whUnitType: "unidad", whPackName: "Caja", whPacksPerCase: "", whUnitsPerPack: "", whUnitPrice: "", whPackCount: "", whLocationId: "",
+          expiryLots: [],
         }));
       } catch (err) {
         setSaveError(logAndGetErrorMessage(err, "Error al crear producto de almacén:"));
@@ -609,6 +640,13 @@ const InventoryModule = ({
         unitType: newProd.unitType,
         status: "Agotado",
       });
+      await Promise.all(
+        newProd.expiryLots.filter(l => l.expiryDate).map(l => addExpiryLot(companyId, {
+          catalog: "inventario", productId: newProductId,
+          entryDate: l.entryDate || null, expiryDate: l.expiryDate,
+          qty: l.qty !== "" && l.qty != null ? Number(l.qty) : null,
+        }))
+      );
 
       if (stock > 0 && cost > 0) {
         await recordPurchase(companyId, {
@@ -623,7 +661,7 @@ const InventoryModule = ({
       }
 
       setShowNewProd(false);
-      setNewProd(p => ({ ...p, name: "", sku: nextSku, description: "", cost: "", stock: "", minStock: "4", unitType: "unidad", presentations: buildDefaultPresentations() }));
+      setNewProd(p => ({ ...p, name: "", sku: nextSku, description: "", cost: "", stock: "", minStock: "4", unitType: "unidad", presentations: buildDefaultPresentations(), expiryLots: [] }));
     } catch (err) {
       setSaveError(logAndGetErrorMessage(err, "Error al crear producto:"));
     }
@@ -679,6 +717,7 @@ const InventoryModule = ({
         unitType: editForm.unitType || "unidad",
         status: statusBeforeStockChange,
       });
+      await syncExpiryLots(companyId, "inventario", editProd.id, editForm.expiryLots, originalExpiryLots);
 
       // BUG QUE ESTO CORRIGE: con stock decimal (productos por Peso), restar
       // dos numeric(14,3) en JS puede arrastrar un residuo de coma flotante
@@ -794,14 +833,23 @@ const InventoryModule = ({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((p, idx) => (
+                {filtered.map((p, idx) => {
+                  const expirySummary = getExpirySummary(lotsByProduct[p.id]);
+                  return (
                   <tr key={p.id} onClick={() => { setSelectedProdId(p.id); setAdjustError(""); setAdjustQty(""); }}
                     className={`border-b border-slate-700/30 cursor-pointer hover:bg-slate-700/40 transition-colors group ${idx % 2 === 0 ? "" : "bg-slate-800/20"}`}>
                     <td className="py-3 px-4 font-mono text-xs text-slate-400">{p.sku}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center flex-shrink-0"><Package size={13} className="text-slate-400" /></div>
-                        <span className="text-slate-200 font-medium group-hover:text-amber-400 transition-colors">{p.name}</span>
+                        <div className="min-w-0">
+                          <span className="block text-slate-200 font-medium group-hover:text-amber-400 transition-colors truncate">{p.name}</span>
+                          {getExpiryLabel(expirySummary) && (
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border mt-0.5 ${getExpiryBadgeClass(expirySummary.status)}`}>
+                              {getExpiryLabel(expirySummary)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell text-xs text-slate-400">{p.packQty ? `${p.packQty} und/empaque` : "—"}</td>
@@ -819,7 +867,8 @@ const InventoryModule = ({
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {filtered.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-slate-500">No se encontraron productos</td></tr>}
               </tbody>
             </table>
@@ -898,7 +947,40 @@ const InventoryModule = ({
                 );
               })()}
 
-              <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50"><StatusBadge status={selectedProduct.status} /></div>
+              {/* Lotes de caducidad — 0, 1 o varios (ver 0023_product_expiry_lots.sql) */}
+              {selectedExpiryLots.length > 0 && (
+                <div>
+                  <p className="text-xs text-slate-400 uppercase tracking-wider mb-2">Fechas de caducidad</p>
+                  <div className="space-y-1.5">
+                    {[...selectedExpiryLots].sort((a, b) => new Date(`${a.expiryDate}T12:00:00`) - new Date(`${b.expiryDate}T12:00:00`)).map(lot => {
+                      const st = getExpirySummary([lot]);
+                      return (
+                        <div key={lot.id} className="flex items-center justify-between bg-slate-800/60 rounded-lg p-2.5 border border-slate-700/50">
+                          <div className="min-w-0">
+                            <p className="text-sm font-mono text-slate-200">{new Date(`${lot.expiryDate}T12:00:00`).toLocaleDateString("es-PE")}</p>
+                            {lot.entryDate && <p className="text-[11px] text-slate-500 font-mono">Entrada: {new Date(`${lot.entryDate}T12:00:00`).toLocaleDateString("es-PE")}</p>}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {lot.qty != null && lot.qty !== "" && <span className="text-[11px] text-slate-400 font-mono">{lot.qty}{selectedProduct.unitType === "peso" ? " kg" : " und"}</span>}
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getExpiryBadgeClass(st.status)}`}>
+                              {getExpiryLabel(st)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50 flex items-center gap-2 flex-wrap">
+                <StatusBadge status={selectedProduct.status} />
+                {getExpiryLabel(selectedExpirySummary) && (
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${getExpiryBadgeClass(selectedExpirySummary.status)}`}>
+                    {getExpiryLabel(selectedExpirySummary)}
+                  </span>
+                )}
+              </div>
 
               {/* Ajustar Stock */}
               {canEdit && (
@@ -1168,6 +1250,12 @@ const InventoryModule = ({
                       </div>
                     );
                   })()}
+
+                  <ExpiryLotsEditor
+                    lots={newProd.expiryLots}
+                    onChange={lots => setNewProd(p => ({ ...p, expiryLots: lots }))}
+                    qtyLabel={newProd.unitType === "peso" ? "Kg" : "Unidades"}
+                  />
                 </>
               ) : (
                 <>
@@ -1307,6 +1395,13 @@ const InventoryModule = ({
                         <p className="text-[10px] text-slate-500 mb-1">Se muestra en Compra/Venta a Proveedor y en el comprobante</p>
                         <textarea value={newProd.description} onChange={e => setNewProd(p => ({ ...p, description: e.target.value }))} placeholder="Ej: Presentación de 500ml, vidrio retornable…" rows={2}
                           className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors resize-none" />
+                      </div>
+                      <div className="col-span-2">
+                        <ExpiryLotsEditor
+                          lots={newProd.expiryLots}
+                          onChange={lots => setNewProd(p => ({ ...p, expiryLots: lots }))}
+                          qtyLabel={newProd.whUnitType === "peso" ? "Kg" : "Unidades"}
+                        />
                       </div>
                       <div className="col-span-2">
                         <label className="text-xs text-slate-400 mb-1 block">Ubicación *</label>
@@ -1455,6 +1550,12 @@ const InventoryModule = ({
                   </div>
                 </div>
               </div>
+
+              <ExpiryLotsEditor
+                lots={editForm.expiryLots || []}
+                onChange={lots => setEditForm(p => ({ ...p, expiryLots: lots }))}
+                qtyLabel={editForm.unitType === "peso" ? "Kg" : "Unidades"}
+              />
 
               {editError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg mt-3">{editError}</p>}
               <div className="flex gap-3 mt-5">

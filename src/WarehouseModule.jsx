@@ -28,7 +28,7 @@ import { formatMoney } from "./utils/currency";
 // independiente a exactamente los mismos datos de almacén).
 export default function WarehouseModule({
   companyId, userName, storeProducts = [], canManage,
-  locations, stock, movements, warehouseProducts, loading,
+  locations, stock, movements, warehouseProducts, loading, expiryLots = [],
 }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -137,7 +137,7 @@ export default function WarehouseModule({
       {wTab === "productos" && canManage && (
         <ProductosTab
           warehouseProducts={warehouseProducts} stockByProduct={stockByProduct} locations={locations}
-          userName={userName} companyId={companyId}
+          userName={userName} companyId={companyId} expiryLots={expiryLots}
         />
       )}
       {wTab === "movimiento" && canManage && (

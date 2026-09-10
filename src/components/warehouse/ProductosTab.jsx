@@ -9,25 +9,31 @@
 // completos (cajas), nunca en unidades sueltas. Extraído de
 // WarehouseModule.jsx al separar el monolito.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   X, Edit3, Trash2, Search, RefreshCw, CheckCircle, MapPin, Boxes, Plus, Info,
 } from "lucide-react";
-import { updateWarehouseProduct, deleteWarehouseProduct, addWarehouseMovement } from "../../services/firestoreService";
+import { updateWarehouseProduct, deleteWarehouseProduct, addWarehouseMovement, syncExpiryLots } from "../../services/firestoreService";
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { calcUnitsPerCase } from "../../utils/packaging";
 import { EmptyState } from "../shared/StatusUI";
 import AddStockModal from "./AddStockModal";
 import { useAuth } from "../../contexts/AuthContext";
 import { formatMoney } from "../../utils/currency";
+import { getExpirySummary, getExpiryLabel, getExpiryBadgeClass, groupLotsByProduct } from "../../utils/expiry";
+import ExpiryLotsEditor from "../shared/ExpiryLotsEditor";
 
-export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId }) {
+export default function ProductosTab({ warehouseProducts, stockByProduct, locations, userName, companyId, expiryLots = [] }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
-  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", unitType: "unidad", whMode: "packs", packsPerCase: "", unitsPerPack: "", unitPrice: "" };
+  const lotsByProduct = useMemo(() => groupLotsByProduct(expiryLots, "almacen"), [expiryLots]);
+  const EMPTY_FORM = { name: "", sku: "", description: "", packName: "", unitType: "unidad", whMode: "packs", packsPerCase: "", unitsPerPack: "", unitPrice: "", expiryLots: [] };
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form,     setForm]     = useState(EMPTY_FORM);
+  // "Lo que había" al abrir el editor de lotes — para detectar al Guardar
+  // cuáles se borraron (ver syncExpiryLots en services/firestore/expiryLots.js).
+  const [originalExpiryLots, setOriginalExpiryLots] = useState([]);
   const [saving,   setSaving]   = useState(false);
   const [error,    setError]    = useState("");
   const [search,   setSearch]   = useState("");
@@ -43,6 +49,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
   function openEdit(p) {
     setEditItem(p);
     const packsPerCase = p.packsPerCase ?? 1;
+    const currentLots = (lotsByProduct[p.id] || []).map(l => ({ id: l.id, entryDate: l.entryDate || "", expiryDate: l.expiryDate || "", qty: l.qty ?? "" }));
     setForm({
       ...EMPTY_FORM, name: p.name || "", sku: p.sku || "", description: p.description || "", packName: p.packName || "",
       unitType: p.unitType || "unidad",
@@ -60,7 +67,9 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
       packsPerCase,
       unitsPerPack: p.unitsPerPack ?? (p.packQty ?? ""),
       unitPrice: p.unitPrice ?? "",
+      expiryLots: currentLots,
     });
+    setOriginalExpiryLots(currentLots);
     setError(""); setShowForm(true);
   }
 
@@ -94,6 +103,7 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
         unitType: form.unitType,
       };
       await updateWarehouseProduct(companyId, editItem.id, payload);
+      await syncExpiryLots(companyId, "almacen", editItem.id, form.expiryLots, originalExpiryLots);
       setShowForm(false); setEditItem(null); setForm(EMPTY_FORM);
     } catch (e) { setError(logAndGetErrorMessage(e, "Error al guardar producto de almacén:", "Error al guardar el producto.")); }
     setSaving(false);
@@ -265,6 +275,13 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
               <textarea value={form.description} onChange={e => setF("description", e.target.value)} placeholder="Ej: Presentación de 500ml, vidrio retornable…" rows={2}
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors resize-none"/>
             </div>
+            <div className="col-span-2">
+              <ExpiryLotsEditor
+                lots={form.expiryLots}
+                onChange={lots => setF("expiryLots", lots)}
+                qtyLabel={form.unitType === "peso" ? "Kg" : (form.packName || "Empaques")}
+              />
+            </div>
           </div>
 
           {/* Ubicación del stock actual — cambiarla mueve TODO ese stock vía
@@ -316,12 +333,19 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
           {filtered.map(p => {
             const locs = (stockByProduct[p.id] || []).filter(s => s.qty > 0);
             const totalPacks = locs.reduce((s, i) => s + (i.qty || 0), 0);
+            const lots = lotsByProduct[p.id] || [];
+            const expirySummary = getExpirySummary(lots);
             return (
               <div key={p.id} className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-3.5 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-white truncate">{p.name}</p>
                     {p.sku && <p className="text-[10px] font-mono text-slate-500">{p.sku}</p>}
+                    {getExpiryLabel(expirySummary) && (
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border mt-1 ${getExpiryBadgeClass(expirySummary.status)}`}>
+                        {getExpiryLabel(expirySummary)}
+                      </span>
+                    )}
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
                     <button onClick={() => openEdit(p)} className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-700 rounded-lg transition-colors"><Edit3 size={12}/></button>
@@ -335,6 +359,13 @@ export default function ProductosTab({ warehouseProducts, stockByProduct, locati
                   {Number(p.unitPrice) > 0 ? ` · ${formatMoney(p.unitPrice, currencySymbol)} ${p.unitType === "peso" ? "por Kg" : `por ${p.packName}`}` : ""}
                 </p>
                 {p.description && <p className="text-[11px] text-slate-500 line-clamp-2">{p.description}</p>}
+                {lots.length > 0 && (
+                  <p className="text-[10px] text-slate-500 font-mono">
+                    {lots.length === 1
+                      ? <>Caduca: {new Date(`${lots[0].expiryDate}T12:00:00`).toLocaleDateString("es-PE")}</>
+                      : <>{lots.length} lotes — el más próximo: {new Date(`${expirySummary.nearest.expiryDate}T12:00:00`).toLocaleDateString("es-PE")}</>}
+                  </p>
+                )}
 
                 {/* Ubicación, nombre y cantidad por ubicación */}
                 <div className="border-t border-slate-700/50 pt-2 space-y-1">

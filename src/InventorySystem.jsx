@@ -11,7 +11,7 @@
 // hasta la refactorización; dividirlo hizo mucho más fácil navegar el
 // proyecto y reduce el riesgo de conflictos de merge entre módulos.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import {
   AlertTriangle, Box, LogOut, Loader2, Warehouse,
   Package, BarChart2, Truck, LayoutDashboard,
@@ -26,6 +26,7 @@ import RolePanel, { RoleBadge } from "./components/RolePanel";
 import { hasPermission, canSeeTab, TAB_DEFS } from "./config/permissions";
 import { useCollection } from "./hooks/useCollection";
 import { useWarehouseData } from "./hooks/useWarehouseData";
+import { getExpiryStatus } from "./utils/expiry";
 import PaywallScreen from "./components/PaywallScreen";
 import TrialBanner   from "./components/TrialBanner";
 
@@ -50,11 +51,12 @@ const WarehouseModule  = lazy(() => import("./WarehouseModule"));
 // `storeProducts` y los 4 datos de almacén llegan ya cargados desde
 // InventorySystem.jsx (compartidos con SuppliersModule.jsx y
 // MovementsModule.jsx) — este wrapper ya no abre ninguna suscripción propia.
-function WarehouseModuleWrapper({ companyId, userName, canManage, storeProducts, locations, stock, movements, warehouseProducts, loadingWarehouse }) {
+function WarehouseModuleWrapper({ companyId, userName, canManage, storeProducts, locations, stock, movements, warehouseProducts, loadingWarehouse, expiryLots }) {
   return (
     <WarehouseModule
       companyId={companyId} userName={userName} storeProducts={storeProducts} canManage={canManage}
       locations={locations} stock={stock} movements={movements} warehouseProducts={warehouseProducts} loading={loadingWarehouse}
+      expiryLots={expiryLots}
     />
   );
 }
@@ -197,7 +199,24 @@ export default function InventoryApp() {
   // necesita `movements`, para su Historial) — antes cada uno abría sus
   // propias suscripciones independientes a las mismas 4 tablas.
   const { locations, stock, movements, warehouseProducts, loading: loadingWarehouse } = useWarehouseData(companyId);
-  const lowStock   = products.filter(p => p.status !== "En Stock").length;
+  // Lotes de caducidad (Inventario + Almacén, ver 0023_product_expiry_
+  // lots.sql) — una sola suscripción compartida entre InventoryModule
+  // (badges de producto) y WarehouseModule→ProductosTab, igual que el
+  // resto de datos de esta pantalla.
+  const [expiryLots] = useCollection(companyId, "productExpiryLots", "expiryDate");
+  const lowStock     = products.filter(p => p.status !== "En Stock").length;
+  // Productos (de cualquiera de los 2 catálogos) con al menos un lote ya
+  // vencido o por vencer (≤30 días, ver EXPIRY_SOON_DAYS) — un solo conteo
+  // por producto aunque tenga varios lotes urgentes a la vez.
+  const expiringCount = useMemo(() => {
+    const seen = new Set();
+    expiryLots.forEach(lot => {
+      const { status } = getExpiryStatus(lot.expiryDate);
+      if (status === "expired" || status === "soon") seen.add(`${lot.catalog}:${lot.productId}`);
+    });
+    return seen.size;
+  }, [expiryLots]);
+  const alertCount = lowStock + expiringCount;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100" style={{ fontFamily: "'IBM Plex Sans','DM Sans',system-ui,sans-serif" }}>
@@ -254,11 +273,14 @@ export default function InventoryApp() {
 
             {/* RIGHT: alertas + usuario + cerrar sesión */}
             <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
-              {lowStock > 0 && (
-                <div className="flex items-center gap-1 sm:gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 sm:px-3 py-1.5 rounded-lg">
+              {alertCount > 0 && (
+                <div
+                  title={`${lowStock} de stock bajo/agotado · ${expiringCount} por vencer o vencidos`}
+                  className="flex items-center gap-1 sm:gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 sm:px-3 py-1.5 rounded-lg"
+                >
                   <AlertTriangle size={11} />
-                  <span className="hidden sm:inline">{lowStock} alertas</span>
-                  <span className="sm:hidden">{lowStock}</span>
+                  <span className="hidden sm:inline">{alertCount} alertas</span>
+                  <span className="sm:hidden">{alertCount}</span>
                 </div>
               )}
               <div className="flex items-center gap-1.5">
@@ -335,7 +357,8 @@ export default function InventoryApp() {
                     canDelete={perms.eliminarRegistros} canViewFinance={perms.verMetricas}
                     canManageWarehouse={perms.gestionarAlmacen}
                     products={products} loadingProducts={loadingProducts}
-                    suppliers={suppliers} locations={locations} warehouseProducts={warehouseProducts} />
+                    suppliers={suppliers} locations={locations} warehouseProducts={warehouseProducts}
+                    expiryLots={expiryLots} />
                 )}
                 {activeTab === "movements" && (
                   <MovementsModule companyId={companyId} userName={userName}
@@ -349,7 +372,8 @@ export default function InventoryApp() {
                     canManage={perms.gestionarAlmacen}
                     storeProducts={products}
                     locations={locations} stock={stock} movements={movements}
-                    warehouseProducts={warehouseProducts} loadingWarehouse={loadingWarehouse} />
+                    warehouseProducts={warehouseProducts} loadingWarehouse={loadingWarehouse}
+                    expiryLots={expiryLots} />
                 )}
                 {activeTab === "suppliers" && (
                   <SuppliersModule companyId={companyId} userName={userName}
