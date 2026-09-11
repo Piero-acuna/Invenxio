@@ -365,7 +365,8 @@ export default function InventoryApp() {
                     canPurchase={perms.registrarCompras} canSell={perms.registrarVentas}
                     canViewFinance={perms.verMetricas} billing={billing}
                     products={products} loadingProducts={loadingProducts}
-                    warehouseMovements={movements} supplierSales={supplierSales} />
+                    warehouseMovements={movements} supplierSales={supplierSales}
+                    expiryLots={expiryLots} />
                 )}
                 {activeTab === "warehouse" && (
                   <WarehouseModuleWrapper companyId={companyId} userName={userName}

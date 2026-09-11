@@ -19,13 +19,14 @@ import { BarcodeScanner } from "../components/BarcodeUI";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
 import { getSellablePresentations, findPresentationByCode } from "../utils/packaging";
+import { groupLotsByProduct, getExpiryStatus, getExpiryBadgeClass } from "../utils/expiry";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MODULE 2 — MOVEMENTS
 // ══════════════════════════════════════════════════════════════════════════════
 const MovementsModule = ({
   companyId, userName, canPurchase, canSell, canViewFinance, billing,
-  products, loadingProducts: loadingP, warehouseMovements, supplierSales,
+  products, loadingProducts: loadingP, warehouseMovements, supplierSales, expiryLots = [],
 }) => {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
@@ -152,7 +153,13 @@ const MovementsModule = ({
   const [showScanner,  setShowScanner]  = useState(false);
   const [scanFeedback, setScanFeedback] = useState(""); // mensaje tras escanear
 
-  const recentProducts = useMemo(() => products.filter(p => p.stock > 0).slice(0, 6), [products]);
+  // Lotes de caducidad del catálogo "inventario" (Tienda), agrupados por
+  // producto — mismo helper y mismo catalog que usa InventoryModule.jsx
+  // para sus badges, así el POS y el Inventario nunca calculan esto de dos
+  // formas distintas.
+  const lotsByProduct = useMemo(() => groupLotsByProduct(expiryLots, "inventario"), [expiryLots]);
+
+  const recentProducts = useMemo(() => products.filter(p => p.stock > 0).slice(0, 9), [products]);
   const sFiltered = sSearch ? products.filter(p =>
     (p.name?.toLowerCase().includes(sSearch.toLowerCase()) || p.barcode?.includes(sSearch) || p.sku?.toLowerCase().includes(sSearch.toLowerCase())) && p.stock > 0
   ) : [];
@@ -174,6 +181,16 @@ const MovementsModule = ({
     const unitType = product.unitType || "unidad";
     const rawMaxQty = (product.stock || 0) / multiplier;
     const maxQty = unitType === "peso" ? rawMaxQty : Math.floor(rawMaxQty);
+    // Lotes de caducidad de este producto, del más próximo a vencer al que
+    // menos urge (FEFO — first-expired, first-out). Si hay más de uno se
+    // preselecciona el que vence primero (la venta recomendada); el
+    // cajero puede cambiarlo desde el selector de la línea en el carrito.
+    // OJO: esto es solo informativo/de elección para el cajero — record_sale
+    // sigue descontando del stock total del producto, no de un lote
+    // específico (no hay todavía descuento de stock por lote en el backend).
+    const lots = [...(lotsByProduct[product.id] || [])].sort(
+      (a, b) => new Date(`${a.expiryDate}T12:00:00`) - new Date(`${b.expiryDate}T12:00:00`)
+    );
     setCart(prev => {
       const ex = prev.find(i => i.id === product.id && i.presentationId === presentation.id);
       return ex
@@ -183,9 +200,10 @@ const MovementsModule = ({
             stock: product.stock || 0, unitType,
             presentationId: presentation.id, presentationName: presentation.name, multiplier,
             price: Number(presentation.price) || 0, qty: Math.min(1, maxQty),
+            lotId: lots[0]?.id || null,
           }];
     });
-  }, []);
+  }, [lotsByProduct]);
 
   const handleBarcodeScan = useCallback((code) => {
     setShowScanner(false);
@@ -273,7 +291,7 @@ const MovementsModule = ({
       {/* ── SALE / POS ── */}
       {mvTab === "sale" && (
         <div className="grid md:grid-cols-5 gap-5">
-          <div className="md:col-span-3 space-y-4">
+          <div className="md:col-span-2 space-y-4">
             <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-base font-bold text-white flex items-center gap-2"><Search size={16} className="text-amber-400" />Buscar Producto</h3>
@@ -310,16 +328,16 @@ const MovementsModule = ({
                         <div className="flex items-center gap-3 group">
                           <div className="w-9 h-9 bg-slate-600 rounded-lg flex items-center justify-center flex-shrink-0"><Package size={15} className="text-slate-400" /></div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-200 group-hover:text-amber-400 transition-colors">{p.name}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium text-slate-200 group-hover:text-amber-400 transition-colors">{p.name}</p>
+                              <StatusBadge status={p.status} />
+                            </div>
                             <p className="text-xs text-slate-500 font-mono">{p.sku} · Stock: {p.stock}</p>
                             {p.description && <p className="text-xs text-slate-500 truncate mt-0.5">{p.description}</p>}
                           </div>
                           {single && (
                             <>
-                              <div className="text-right mr-2">
-                                <p className="text-sm font-bold font-mono text-amber-400">{formatMoney(single.price, currencySymbol)}</p>
-                                <StatusBadge status={p.status} />
-                              </div>
+                              <p className="text-sm font-bold font-mono text-amber-400 mr-2">{formatMoney(single.price, currencySymbol)}</p>
                               <Plus size={16} className="text-slate-500 group-hover:text-amber-400 flex-shrink-0 transition-colors" />
                             </>
                           )}
@@ -344,13 +362,18 @@ const MovementsModule = ({
               ) : (
                 <div className="mt-4">
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                    <Clock size={11} className="text-amber-400" />Productos disponibles — toca para agregar
+                    <Clock size={11} className="text-amber-400" />Productos disponibles ({recentProducts.length}) — toca para agregar
                   </p>
                   {loadingP ? <Spinner /> : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {recentProducts.map(p => {
                         const presentations = getSellablePresentations(p);
                         const single = presentations.length === 1 ? presentations[0] : null;
+                        // Mismos umbrales visuales que StatusBadge (En Stock /
+                        // Stock Bajo / Agotado), pero como color de texto simple
+                        // acá — así el cajero ve de un vistazo qué le queda
+                        // justo, sin tener que abrir el producto en Inventario.
+                        const stockColor = p.stock <= 5 ? "text-red-400" : p.stock <= 20 ? "text-amber-400" : "text-slate-500";
                         return (
                           <div key={p.id}
                             className={`p-3 bg-slate-700/40 border border-slate-600/40 rounded-xl transition-all text-left group ${single ? "hover:bg-slate-700 hover:border-amber-500/40 cursor-pointer" : ""}`}
@@ -359,27 +382,31 @@ const MovementsModule = ({
                               <Package size={14} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
                             </div>
                             <p className="text-xs font-semibold text-slate-200 leading-tight line-clamp-2 group-hover:text-amber-400 transition-colors">{p.name}</p>
+                            {p.sku && <p className="text-[10px] text-slate-500 font-mono truncate">{p.sku}</p>}
                             {p.description && <p className="text-[11px] text-slate-500 leading-tight line-clamp-1 mt-0.5">{p.description}</p>}
                             {single ? (
                               <>
                                 <p className="text-xs font-bold font-mono text-amber-400 mt-1.5">{formatMoney(single.price, currencySymbol)}</p>
                                 <div className="flex items-center justify-between mt-1">
-                                  <span className="text-xs text-slate-500 font-mono">x{p.stock}</span>
+                                  <span className={`text-xs font-mono ${stockColor}`}>Stock: {p.stock}</span>
                                   <Plus size={12} className="text-slate-500 group-hover:text-amber-400 transition-colors" />
                                 </div>
                               </>
                             ) : (
-                              <div className="flex flex-wrap gap-1 mt-1.5">
-                                {presentations.map(pres => {
-                                  const maxQty = Math.floor((p.stock || 0) / (Number(pres.multiplier) || 1));
-                                  return (
-                                    <button key={pres.id} type="button" disabled={maxQty < 1} onClick={() => addToCart(p, pres)}
-                                      className="px-1.5 py-1 bg-slate-800 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 hover:border-amber-500/40 rounded text-[10px] font-semibold text-slate-300 hover:text-amber-400 transition-colors">
-                                      {pres.name} <span className="font-mono text-amber-400">{formatMoney(pres.price, currencySymbol)}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                              <>
+                                <span className={`text-[10px] font-mono block mt-1.5 ${stockColor}`}>Stock: {p.stock}</span>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {presentations.map(pres => {
+                                    const maxQty = Math.floor((p.stock || 0) / (Number(pres.multiplier) || 1));
+                                    return (
+                                      <button key={pres.id} type="button" disabled={maxQty < 1} onClick={() => addToCart(p, pres)}
+                                        className="px-1.5 py-1 bg-slate-800 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 hover:border-amber-500/40 rounded text-[10px] font-semibold text-slate-300 hover:text-amber-400 transition-colors">
+                                        {pres.name} <span className="font-mono text-amber-400">{formatMoney(pres.price, currencySymbol)}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </>
                             )}
                           </div>
                         );
@@ -392,12 +419,12 @@ const MovementsModule = ({
           </div>
 
           {/* Cart */}
-          <div className="md:col-span-2 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 flex flex-col">
+          <div className="md:col-span-3 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 flex flex-col">
             <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
               <ShoppingCart size={16} className="text-amber-400" />Lista de Venta
               {cart.length > 0 && <span className="ml-auto text-xs bg-amber-500 text-slate-900 font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
             </h3>
-            <div className="flex-1 space-y-2 overflow-y-auto max-h-72">
+            <div className="flex-1 space-y-2 overflow-y-auto max-h-[30rem]">
               {cart.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full py-8 text-slate-600">
                   <ShoppingCart size={28} className="mb-2 opacity-30" />
@@ -408,9 +435,19 @@ const MovementsModule = ({
                 const rawMaxQty = (item.stock || 0) / (Number(item.multiplier) || 1);
                 const isPeso = item.unitType === "peso";
                 const maxQty = isPeso ? rawMaxQty : Math.floor(rawMaxQty);
+                // Cuánto queda de ESTA presentación después de lo que ya está
+                // en el carrito — para que el cajero vea el límite real antes
+                // de chocar contra el tope silencioso de los botones +/-.
+                const remaining = Math.max(0, maxQty - (Number(item.qty) || 0));
                 const isSameLine = i => i.id === item.id && i.presentationId === item.presentationId;
+                // Lotes de este producto ordenados por caducidad (más próximo
+                // primero) — 0, 1 o varios (ver product_expiry_lots).
+                const itemLots = [...(lotsByProduct[item.id] || [])].sort(
+                  (a, b) => new Date(`${a.expiryDate}T12:00:00`) - new Date(`${b.expiryDate}T12:00:00`)
+                );
+                const selectedLot = itemLots.find(l => l.id === item.lotId) || itemLots[0] || null;
                 return (
-                  <div key={`${item.id}:${item.presentationId}`} className="flex items-center gap-2 p-2.5 bg-slate-700/50 rounded-lg border border-slate-600/40">
+                  <div key={`${item.id}:${item.presentationId}`} className="flex items-start gap-2 p-3 bg-slate-700/50 rounded-lg border border-slate-600/40">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-slate-200 truncate">
                         {item.name}
@@ -418,8 +455,42 @@ const MovementsModule = ({
                           <span className="ml-1.5 px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded text-[10px] font-semibold align-middle">{item.presentationName}</span>
                         )}
                       </p>
-                      <p className="text-xs text-slate-500 font-mono">{formatMoney(item.price, currencySymbol)} {isPeso ? "/kg" : "c/u"}</p>
-                      {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
+                      <p className="text-xs text-slate-500 font-mono">
+                        {item.sku && <span className="mr-1.5">{item.sku}</span>}
+                        {formatMoney(item.price, currencySymbol)} {isPeso ? "/kg" : "c/u"}
+                      </p>
+                      <p className={`text-[10px] font-mono ${remaining <= 2 ? "text-red-400" : remaining <= 5 ? "text-amber-400" : "text-slate-600"}`}>
+                        Disponible: {isPeso ? remaining.toFixed(3) : remaining}{isPeso ? " kg" : " más"}
+                      </p>
+                      {item.description && <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{item.description}</p>}
+                      {/* Caducidad: si el producto tiene 2+ lotes, el cajero
+                          elige de cuál está vendiendo (ej. liquidar primero
+                          el que vence antes); con 1 solo lote se muestra la
+                          fecha fija, sin selector de por medio. */}
+                      {itemLots.length > 1 ? (
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          <span className="text-[10px] text-slate-500 whitespace-nowrap">Lote a vender:</span>
+                          <select
+                            value={item.lotId || ""}
+                            onChange={e => {
+                              const newLotId = e.target.value;
+                              setCart(prev => prev.map(i => isSameLine(i) ? { ...i, lotId: newLotId } : i));
+                            }}
+                            className="flex-1 min-w-0 px-1.5 py-0.5 bg-slate-800 border border-slate-600 rounded text-[10px] font-mono text-slate-200 focus:outline-none focus:border-amber-500"
+                          >
+                            {itemLots.map(lot => {
+                              const { status, days } = getExpiryStatus(lot.expiryDate);
+                              const dateLabel = new Date(`${lot.expiryDate}T12:00:00`).toLocaleDateString("es-PE");
+                              const flag = status === "expired" ? " · vencido" : status === "soon" ? ` · ${days}d` : "";
+                              return <option key={lot.id} value={lot.id}>{dateLabel}{flag}</option>;
+                            })}
+                          </select>
+                        </div>
+                      ) : itemLots.length === 1 ? (
+                        <span className={`inline-flex items-center gap-1 mt-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getExpiryBadgeClass(getExpiryStatus(itemLots[0].expiryDate).status)}`}>
+                          Caduca: {new Date(`${itemLots[0].expiryDate}T12:00:00`).toLocaleDateString("es-PE")}
+                        </span>
+                      ) : null}
                     </div>
                     {/* Productos por Peso: el cajero teclea el peso exacto
                         (ej. de la balanza) en vez de tocar "+1" trescientas
