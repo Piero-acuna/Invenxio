@@ -9,14 +9,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import {
-  Warehouse, X, Package, Search, RefreshCw, CheckCircle, AlertTriangle, Store,
+  Warehouse, X, Package, Search, RefreshCw, CheckCircle, AlertTriangle, Store, MapPin, Calendar,
 } from "lucide-react";
 import { addWarehouseMovement, sendWarehouseToInventory } from "../../services/firestoreService";
 import { logAndGetErrorMessage } from "../../utils/errors";
 import { TYPE_CFG, SELECTABLE_MOVEMENT_TYPES } from "./constants";
 import { calcUnitsFromPacks } from "../../utils/packaging";
+import { groupLotsByProduct, getExpiryStatus, getExpiryBadgeClass } from "../../utils/expiry";
 
-export default function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId, userName, stockByProduct }) {
+export default function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId, userName, stockByProduct, expiryLots = [] }) {
   const EMPTY = {
     type: "traslado", productSearch: "", product: null,
     qty: "", reason: "", fromLocationId: "", toLocationId: "",
@@ -53,6 +54,26 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
   const fromStock = form.product && form.fromLocationId
     ? (stockByProduct[form.product.id] || []).find(s => s.locationId === form.fromLocationId)
     : null;
+
+  // Lotes de caducidad del catálogo "almacen" (mismo helper que usa
+  // ProductosTab.jsx, así los dos lados de Almacén leen la misma fuente).
+  const lotsByProduct = groupLotsByProduct(expiryLots, "almacen");
+  const productLots = form.product
+    ? [...(lotsByProduct[form.product.id] || [])].sort(
+        (a, b) => new Date(`${a.expiryDate}T12:00:00`) - new Date(`${b.expiryDate}T12:00:00`)
+      )
+    : [];
+
+  // Desglose de stock del producto seleccionado en TODAS las ubicaciones —
+  // antes solo se veía el stock de la ubicación de origen ya elegida; esto
+  // deja comparar antes de decidir de dónde sacar la mercadería.
+  const productStockByLocation = form.product
+    ? (stockByProduct[form.product.id] || [])
+        .filter(s => (s.qty || 0) > 0)
+        .map(s => ({ ...s, locationName: locations.find(l => l.id === s.locationId)?.name || "—" }))
+        .sort((a, b) => b.qty - a.qty)
+    : [];
+  const productTotalStock = productStockByLocation.reduce((sum, s) => sum + (s.qty || 0), 0);
 
   function setF(key, val) { setForm(f => ({ ...f, [key]: val })); }
 
@@ -112,8 +133,8 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
   const typeInfo = TYPE_CFG[form.type];
 
   return (
-    <div className="max-w-lg">
-      <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 space-y-4">
+    <div className="max-w-5xl grid lg:grid-cols-5 gap-5 items-start">
+      <div className="lg:col-span-3 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 space-y-4">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <Warehouse size={15} className="text-amber-400" /> Registrar Movimiento de Almacén
         </h3>
@@ -328,6 +349,82 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
             Registrar {typeInfo.label}
           </button>
         </>)}
+      </div>
+
+      {/* Panel de detalle del producto elegido — antes solo se veía el stock
+          de la ubicación de origen ya seleccionada (fromStock); esto muestra
+          el desglose completo por ubicación (para comparar antes de elegir
+          de dónde sacar mercadería) y los lotes de caducidad del producto,
+          para poder priorizar mover primero lo que vence antes. */}
+      <div className="lg:col-span-2 bg-slate-800/60 border border-slate-700/50 rounded-xl p-5 space-y-4 lg:sticky lg:top-4">
+        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+          <Package size={15} className="text-amber-400" /> Detalle del Producto
+        </h3>
+
+        {!form.product ? (
+          <p className="text-xs text-slate-500">Selecciona un producto de almacén para ver su stock por ubicación y lotes de caducidad.</p>
+        ) : (
+          <>
+            <div>
+              <p className="text-sm font-semibold text-slate-200">{form.product.name}</p>
+              <p className="text-xs font-mono text-slate-500">{form.product.sku}</p>
+              {form.product.description && <p className="text-xs text-slate-500 mt-1">{form.product.description}</p>}
+            </div>
+
+            <div className="flex items-center justify-between px-3 py-2 bg-slate-900/60 border border-slate-700/50 rounded-lg">
+              <span className="text-xs text-slate-400">Stock total (todas las ubicaciones)</span>
+              <span className="text-sm font-bold font-mono text-amber-400">{productTotalStock} {packName}</span>
+            </div>
+
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <MapPin size={11} /> Stock por ubicación
+              </p>
+              {productStockByLocation.length === 0 ? (
+                <p className="text-xs text-slate-600">Sin stock en ninguna ubicación.</p>
+              ) : (
+                <div className="space-y-1">
+                  {productStockByLocation.map(s => (
+                    <div key={s.locationId}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs ${s.locationId === form.fromLocationId ? "bg-amber-500/10 border border-amber-500/30 text-amber-300" : "bg-slate-900/40 text-slate-400"}`}>
+                      <span className="truncate">{s.locationName}</span>
+                      <span className="font-mono flex-shrink-0">{s.qty} {packName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <Calendar size={11} /> Lotes de caducidad
+              </p>
+              {productLots.length === 0 ? (
+                <p className="text-xs text-slate-600">Sin lotes de caducidad registrados para este producto.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {productLots.map(lot => {
+                    const { status } = getExpiryStatus(lot.expiryDate);
+                    return (
+                      <div key={lot.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-slate-900/40 rounded-lg text-xs">
+                        <div className="min-w-0">
+                          <p className="font-mono text-slate-300">{new Date(`${lot.expiryDate}T12:00:00`).toLocaleDateString("es-PE")}</p>
+                          {lot.note && <p className="text-[10px] text-slate-500 truncate">{lot.note}</p>}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-slate-500 font-mono">{lot.qty} {packName}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getExpiryBadgeClass(status)}`}>
+                            {status === "expired" ? "Vencido" : status === "soon" ? "Por vencer" : "Vigente"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

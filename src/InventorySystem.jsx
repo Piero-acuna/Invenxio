@@ -26,7 +26,8 @@ import RolePanel, { RoleBadge } from "./components/RolePanel";
 import { hasPermission, canSeeTab, TAB_DEFS } from "./config/permissions";
 import { useCollection } from "./hooks/useCollection";
 import { useWarehouseData } from "./hooks/useWarehouseData";
-import { getExpiryStatus } from "./utils/expiry";
+import { getExpiryStatus, getExpiryBadgeClass } from "./utils/expiry";
+import { StatusBadge } from "./components/shared/StatusUI";
 import PaywallScreen from "./components/PaywallScreen";
 import TrialBanner   from "./components/TrialBanner";
 
@@ -217,6 +218,40 @@ export default function InventoryApp() {
     return seen.size;
   }, [expiryLots]);
   const alertCount = lowStock + expiringCount;
+  const [showAlerts, setShowAlerts] = useState(false);
+
+  // Mapas id → nombre para poder mostrar el nombre del producto en el panel
+  // de alertas (los lotes solo guardan productId, ver product_expiry_lots) —
+  // separados por catálogo porque un mismo id puede existir en Inventario y
+  // en Almacén como productos distintos.
+  const productNameById = useMemo(() => {
+    const map = {};
+    products.forEach(p => { map[p.id] = p.name; });
+    return map;
+  }, [products]);
+  const warehouseProductNameById = useMemo(() => {
+    const map = {};
+    warehouseProducts.forEach(p => { map[p.id] = p.name; });
+    return map;
+  }, [warehouseProducts]);
+
+  // Detalle (nombre + fecha) de cada LOTE vencido o por vencer, para el
+  // panel de alertas — a diferencia de `expiringCount` (que cuenta 1 vez
+  // por producto), acá se lista cada lote urgente por separado, ordenado
+  // del más vencido/próximo a vencer al que menos urge.
+  const expiringItems = useMemo(() => {
+    const items = [];
+    expiryLots.forEach(lot => {
+      const { status, days } = getExpiryStatus(lot.expiryDate);
+      if (status !== "expired" && status !== "soon") return;
+      const name = lot.catalog === "inventario" ? productNameById[lot.productId] : warehouseProductNameById[lot.productId];
+      if (!name) return; // producto ya eliminado — no hay nada que mostrarle al usuario
+      items.push({ id: lot.id, name, catalog: lot.catalog, expiryDate: lot.expiryDate, status, days });
+    });
+    return items.sort((a, b) => new Date(`${a.expiryDate}T12:00:00`) - new Date(`${b.expiryDate}T12:00:00`));
+  }, [expiryLots, productNameById, warehouseProductNameById]);
+
+  const lowStockItems = useMemo(() => products.filter(p => p.status !== "En Stock"), [products]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100" style={{ fontFamily: "'IBM Plex Sans','DM Sans',system-ui,sans-serif" }}>
@@ -274,13 +309,51 @@ export default function InventoryApp() {
             {/* RIGHT: alertas + usuario + cerrar sesión */}
             <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
               {alertCount > 0 && (
-                <div
-                  title={`${lowStock} de stock bajo/agotado · ${expiringCount} por vencer o vencidos`}
-                  className="flex items-center gap-1 sm:gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 sm:px-3 py-1.5 rounded-lg"
-                >
-                  <AlertTriangle size={11} />
-                  <span className="hidden sm:inline">{alertCount} alertas</span>
-                  <span className="sm:hidden">{alertCount}</span>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowAlerts(v => !v)}
+                    title={`${lowStock} de stock bajo/agotado · ${expiringCount} por vencer o vencidos`}
+                    className="flex items-center gap-1 sm:gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 sm:px-3 py-1.5 rounded-lg hover:bg-amber-500/20 transition-colors"
+                  >
+                    <AlertTriangle size={11} />
+                    <span className="hidden sm:inline">{alertCount} alertas</span>
+                    <span className="sm:hidden">{alertCount}</span>
+                  </button>
+                  {showAlerts && (
+                    <div className="absolute right-0 mt-2 w-72 sm:w-80 max-h-96 overflow-y-auto bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 p-3 space-y-4">
+                      {expiringItems.length > 0 && (
+                        <div>
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Por vencer / vencidos</p>
+                          <div className="space-y-1.5">
+                            {expiringItems.map(item => (
+                              <div key={item.id} className="flex items-center justify-between gap-2 text-xs">
+                                <div className="min-w-0">
+                                  <p className="text-slate-200 truncate">{item.name}</p>
+                                  <p className="text-[10px] text-slate-500">{item.catalog === "inventario" ? "Tienda" : "Almacén"}</p>
+                                </div>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border flex-shrink-0 ${getExpiryBadgeClass(item.status)}`}>
+                                  {new Date(`${item.expiryDate}T12:00:00`).toLocaleDateString("es-PE")}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {lowStockItems.length > 0 && (
+                        <div>
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Stock bajo / agotado</p>
+                          <div className="space-y-1.5">
+                            {lowStockItems.map(p => (
+                              <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
+                                <p className="text-slate-200 truncate">{p.name}</p>
+                                <StatusBadge status={p.status} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="flex items-center gap-1.5">

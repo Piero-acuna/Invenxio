@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Candado anti-overflow horizontal: en móvil, si algún elemento se pasa por
+   error del ancho del viewport (texto largo sin truncar, badge sin wrap,
+   etc.), el navegador deja hacer scroll horizontal y muestra el fondo
+   blanco por defecto detrás de la app oscura — se ve como un "panel gris"
+   pegado al borde derecho al arrastrar. Esto no arregla la causa puntual
+   si aparece un elemento demasiado ancho, pero evita que se pueda hacer
+   scroll para verlo, que es el síntoma visible.
+   Nota: `w-full` (no `100vw`) porque 100vw en Chrome/Android incluye el
+   ancho de la barra de scroll y puede volver a dejar un hueco horizontal. */
+html, body, #root {
+  overflow-x: hidden;
+  width: 100%;
+}
+
+
 @keyframes package-enter {
   0% {
     opacity: 0;

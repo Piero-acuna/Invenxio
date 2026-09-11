@@ -471,7 +471,7 @@ const MovementsModule = ({
                         <div className="mt-1.5 flex items-center gap-1.5">
                           <span className="text-[10px] text-slate-500 whitespace-nowrap">Lote a vender:</span>
                           <select
-                            value={item.lotId || ""}
+                            value={selectedLot?.id || ""}
                             onChange={e => {
                               const newLotId = e.target.value;
                               setCart(prev => prev.map(i => isSameLine(i) ? { ...i, lotId: newLotId } : i));
