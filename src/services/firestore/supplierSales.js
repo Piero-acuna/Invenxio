@@ -8,7 +8,7 @@ export async function sellWarehouseToSupplier(companyId, {
   warehouseProductId, warehouseProductName, sku, description,
   locationId, locationName,
   packCount, packName, packQty,
-  unitPricePerPack, supplierName,
+  unitPricePerPack, supplierId, supplierName,
   note, userName, status = "Entregado",
 }) {
   const { clientDate, clientTime } = getLocalDateTimeParams();
@@ -24,6 +24,7 @@ export async function sellWarehouseToSupplier(companyId, {
     p_pack_name: packName,
     p_pack_qty: packQty,
     p_unit_price_per_pack: unitPricePerPack,
+    p_supplier_id: supplierId || null,
     p_supplier_name: supplierName,
     p_note: note || "",
     p_user_name: userName,

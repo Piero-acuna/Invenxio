@@ -422,7 +422,7 @@ export default function InventoryApp() {
                     suppliers={suppliers} loadingSuppliers={loadingSuppliers}
                     supplierSales={supplierSales} loadingSupplierSales={loadingSupplierSales}
                     locations={locations} warehouseStock={stock} warehouseProducts={warehouseProducts}
-                    loadingWarehouse={loadingWarehouse} />
+                    loadingWarehouse={loadingWarehouse} expiryLots={expiryLots} />
                 )}
                 {activeTab === "inventory" && (
                   <InventoryModule companyId={companyId} userName={userName}

@@ -14,18 +14,20 @@ import { useMemo } from "react";
 import {
   LayoutDashboard, Package, Warehouse, Truck, BarChart2, AlertTriangle,
   CheckCircle2, TrendingUp, TrendingDown, Clock, ArrowRight, Wallet,
-  Boxes, Users, ShoppingCart, PackageX, Loader2, Trophy, ArrowDownCircle,
+  Boxes, Users, ShoppingCart, PackageX, Loader2, Trophy, ArrowDownCircle, Calendar,
 } from "lucide-react";
 import { useDashboardTransactionsSummary } from "../hooks/useDashboardSummary";
 import { useAuth } from "../contexts/AuthContext";
 import { formatMoney } from "../utils/currency";
 import { calcInventoryValue } from "../utils/finance";
+import { getExpiryStatus } from "../utils/expiry";
 
 export default function DashboardModule({
   companyId, userName, companyName, perms, onNavigate,
   products, loadingProducts: loadingProd, suppliers, loadingSuppliers: loadingSup,
   supplierSales, loadingSupplierSales: loadingSS,
   locations = [], warehouseStock = [], warehouseProducts = [], loadingWarehouse: loadingWh,
+  expiryLots = [],
 }) {
   // Símbolo de moneda de la empresa (S/ para Perú, $ para el resto — ver
   // countryConfig.js). `money` reemplaza al viejo `S/ ${...}` fijo.
@@ -127,6 +129,21 @@ export default function DashboardModule({
     pending:  supplierSales.filter(s => s.status === "Pendiente").length,
   }), [suppliers, supplierSales]);
 
+  // ── Vencimientos (tienda / almacén) ─────────────────────────────────────────
+  // Mismo criterio que el panel de alertas del header (getExpiryStatus) —
+  // separado por catálogo porque cada uno navega a un módulo distinto.
+  const expiry = useMemo(() => {
+    const out = { storeExpired: 0, storeSoon: 0, whExpired: 0, whSoon: 0 };
+    expiryLots.forEach(lot => {
+      const { status } = getExpiryStatus(lot.expiryDate);
+      if (status !== "expired" && status !== "soon") return;
+      const isStore = lot.catalog === "inventario";
+      if (status === "expired") { if (isStore) out.storeExpired++; else out.whExpired++; }
+      else { if (isStore) out.storeSoon++; else out.whSoon++; }
+    });
+    return out;
+  }, [expiryLots]);
+
   const loading =
     (perms.verInventario || perms.registrarVentas || perms.registrarCompras) && (loadingProd || loadingTx) ||
     perms.verAlmacen && loadingWh ||
@@ -157,6 +174,22 @@ export default function DashboardModule({
     perms.verProveedores && sup.pending > 0 && {
       icon: <Clock size={14} />, label: `${sup.pending} venta${sup.pending === 1 ? "" : "s"} a proveedor pendiente${sup.pending === 1 ? "" : "s"}`,
       tone: "sky", nav: "suppliers",
+    },
+    perms.verInventario && expiry.storeExpired > 0 && {
+      icon: <Calendar size={14} />, label: `${expiry.storeExpired} producto${expiry.storeExpired === 1 ? "" : "s"} vencido${expiry.storeExpired === 1 ? "" : "s"} en tienda`,
+      tone: "red", nav: "inventory",
+    },
+    perms.verInventario && expiry.storeSoon > 0 && {
+      icon: <Calendar size={14} />, label: `${expiry.storeSoon} producto${expiry.storeSoon === 1 ? "" : "s"} por vencer en tienda`,
+      tone: "amber", nav: "inventory",
+    },
+    perms.verAlmacen && expiry.whExpired > 0 && {
+      icon: <Calendar size={14} />, label: `${expiry.whExpired} producto${expiry.whExpired === 1 ? "" : "s"} vencido${expiry.whExpired === 1 ? "" : "s"} en almacén`,
+      tone: "red", nav: "warehouse",
+    },
+    perms.verAlmacen && expiry.whSoon > 0 && {
+      icon: <Calendar size={14} />, label: `${expiry.whSoon} producto${expiry.whSoon === 1 ? "" : "s"} por vencer en almacén`,
+      tone: "amber", nav: "warehouse",
     },
   ].filter(Boolean);
 

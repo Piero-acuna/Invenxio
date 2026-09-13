@@ -328,12 +328,13 @@ const SuppliersModule = ({
     setSsSaving(true);
     try {
       const loc = warehouseLocations.find(l => l.id === ssForm.locationId);
+      const sup = suppliers.find(s => s.name === ssForm.supplier);
       await sellWarehouseToSupplier(companyId, {
         warehouseProductId: ssForm.product.id, warehouseProductName: ssForm.product.name, sku: ssForm.product.sku || "",
         description: ssForm.product.description || "",
         locationId: ssForm.locationId, locationName: loc?.name || "",
         packCount: qty, packName: ssForm.product.packName, packQty: ssForm.product.packQty,
-        unitPricePerPack: Number(ssForm.unitPrice), supplierName: ssForm.supplier,
+        unitPricePerPack: Number(ssForm.unitPrice), supplierId: sup?.id || "", supplierName: ssForm.supplier,
         note: ssForm.note, userName, status: ssForm.status,
       });
       setSsSuccess(true);
@@ -426,11 +427,16 @@ const SuppliersModule = ({
     exportToExcel(rows, "Invenxio_Ventas_Proveedores", "Ventas a Proveedores");
   }
 
+  // Emparejar por supplierId cuando la fila ya lo tiene (compras/ventas
+  // hechas después de 0024, o backfillada porque el nombre coincidía) — así
+  // renombrar un proveedor no le "borra" su historial. Las filas viejas que
+  // el backfill no pudo resolver (nombre ya distinto al de hoy) siguen
+  // cayendo al match por nombre, igual que antes de este arreglo.
   const supplierOrders = selSupplier
-    ? transactions.filter(t => t.type === "compra" && t.supplier === selSupplier.name)
+    ? transactions.filter(t => t.type === "compra" && (t.supplierId ? t.supplierId === selSupplier.id : t.supplier === selSupplier.name))
     : [];
   const supplierSalesHistory = selSupplier
-    ? supplierSales.filter(sale => sale.supplier === selSupplier.name)
+    ? supplierSales.filter(sale => sale.supplierId ? sale.supplierId === selSupplier.id : sale.supplier === selSupplier.name)
     : [];
   const totalVendido = sumTotals(supplierSalesHistory);
 
