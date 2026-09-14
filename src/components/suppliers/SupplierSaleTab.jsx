@@ -5,6 +5,7 @@
 // presentación puro — el estado del formulario y los handlers viven en
 // SuppliersModule.
 // ─────────────────────────────────────────────────────────────────────────────
+import { useRef } from "react";
 import {
   X, Package, AlertTriangle, CheckCircle, Send, Calendar, Tag,
   Loader2, Receipt, TrendingUp, Clock, FileSpreadsheet,
@@ -12,6 +13,7 @@ import {
 import { StatusBadge, Spinner } from "../shared/StatusUI";
 import { useAuth } from "../../contexts/AuthContext";
 import { formatMoney } from "../../utils/currency";
+import { useDropdownPlacement } from "../../hooks/useDropdownPlacement";
 
 export default function SupplierSaleTab({
   suppliers, warehouseLocations, stockByProduct,
@@ -22,6 +24,8 @@ export default function SupplierSaleTab({
 }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
+  const productAnchorRef = useRef(null);
+  const productDropdown = useDropdownPlacement(productAnchorRef, ssFiltered.length > 0 && !ssForm.product);
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-3">
@@ -59,7 +63,7 @@ export default function SupplierSaleTab({
             </div>
             <div>
               <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">Producto de almacén *</label>
-              <div className="relative">
+              <div className="relative" ref={productAnchorRef}>
                 <input value={ssForm.productSearch} onChange={e => setSsForm(p => ({ ...p, productSearch: e.target.value, product: null }))} placeholder="Buscar…"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                 {ssForm.product && (
@@ -77,7 +81,10 @@ export default function SupplierSaleTab({
                   <p className="text-[11px] text-slate-500 mt-1">{ssForm.product.description}</p>
                 )}
                 {ssFiltered.length > 0 && !ssForm.product && (
-                  <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                  <div
+                    className={`absolute z-20 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-y-auto ${productDropdown.openUp ? "bottom-full mb-1" : "mt-1"}`}
+                    style={{ maxHeight: productDropdown.maxHeight }}
+                  >
                     {ssFiltered.slice(0, 5).map(p => {
                       const totalStock = (stockByProduct[p.id] || []).reduce((s, i) => s + (i.qty || 0), 0);
                       return (

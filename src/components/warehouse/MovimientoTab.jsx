@@ -7,7 +7,7 @@
 // el botón "Agregar Stock"). Extraído de WarehouseModule.jsx al separar el
 // monolito por componentes.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Warehouse, X, Package, Search, RefreshCw, CheckCircle, AlertTriangle, Store, MapPin, Calendar,
 } from "lucide-react";
@@ -16,6 +16,7 @@ import { logAndGetErrorMessage } from "../../utils/errors";
 import { TYPE_CFG, SELECTABLE_MOVEMENT_TYPES } from "./constants";
 import { calcUnitsFromPacks } from "../../utils/packaging";
 import { groupLotsByProduct, getExpiryStatus, getExpiryBadgeClass } from "../../utils/expiry";
+import { useDropdownPlacement } from "../../hooks/useDropdownPlacement";
 
 export default function MovimientoTab({ locations, warehouseProducts, storeProducts, companyId, userName, stockByProduct, expiryLots = [] }) {
   const EMPTY = {
@@ -38,11 +39,15 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
   const filtered = form.productSearch && !form.product
     ? warehouseProducts.filter(p => p.name?.toLowerCase().includes(form.productSearch.toLowerCase()) || p.sku?.toLowerCase().includes(form.productSearch.toLowerCase()))
     : [];
+  const productAnchorRef = useRef(null);
+  const productDropdown = useDropdownPlacement(productAnchorRef, filtered.length > 0 && !form.product);
 
   // Buscador del producto de TIENDA destino — solo aplica en "Enviar a Tienda"
   const storeFiltered = isEnvio && form.storeProductSearch && !form.storeProduct
     ? storeProducts.filter(p => p.name?.toLowerCase().includes(form.storeProductSearch.toLowerCase()) || p.sku?.toLowerCase().includes(form.storeProductSearch.toLowerCase()))
     : [];
+  const storeAnchorRef = useRef(null);
+  const storeDropdown = useDropdownPlacement(storeAnchorRef, storeFiltered.length > 0 && !form.storeProduct);
 
   // El almacén siempre se mueve en EMPAQUES completos (cajas). "qty" es la
   // cantidad de empaques que se descuentan del origen. En "Enviar a Tienda"
@@ -170,7 +175,7 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
           {/* Producto — SIEMPRE del catálogo propio de almacén */}
           <div>
             <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 block">Producto de almacén *</label>
-            <div className="relative">
+            <div className="relative" ref={productAnchorRef}>
               <input value={form.productSearch}
                 onChange={e => setF("productSearch", e.target.value) || setF("product", null)}
                 placeholder="Buscar por nombre o SKU…"
@@ -187,7 +192,10 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
                 <p className="text-[11px] text-slate-500 mt-1">{form.product.description}</p>
               )}
               {filtered.length > 0 && !form.product && (
-                <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                <div
+                  className={`absolute z-20 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-y-auto ${productDropdown.openUp ? "bottom-full mb-1" : "mt-1"}`}
+                  style={{ maxHeight: productDropdown.maxHeight }}
+                >
                   {filtered.slice(0, 6).map(p => {
                     const totalQty = (stockByProduct[p.id] || []).reduce((s, i) => s + (i.qty || 0), 0);
                     return (
@@ -250,7 +258,7 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
               <label className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 block flex items-center gap-1.5">
                 <Store size={11} className="text-amber-400" /> ¿A qué producto de la tienda se suma? *
               </label>
-              <div className="relative">
+              <div className="relative" ref={storeAnchorRef}>
                 <input value={form.storeProductSearch}
                   onChange={e => setF("storeProductSearch", e.target.value) || setF("storeProduct", null)}
                   placeholder="Buscar producto de tienda por nombre o SKU…"
@@ -274,7 +282,10 @@ export default function MovimientoTab({ locations, warehouseProducts, storeProdu
                   </div>
                 )}
                 {storeFiltered.length > 0 && !form.storeProduct && (
-                  <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                  <div
+                    className={`absolute z-20 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-y-auto ${storeDropdown.openUp ? "bottom-full mb-1" : "mt-1"}`}
+                    style={{ maxHeight: storeDropdown.maxHeight }}
+                  >
                     {storeFiltered.slice(0, 6).map(p => {
                       const isMatch = p.name?.trim().toLowerCase() === form.product?.name?.trim().toLowerCase();
                       return (

@@ -5,12 +5,14 @@
 // presentación puro — el estado del formulario y los handlers viven en
 // SuppliersModule.
 // ─────────────────────────────────────────────────────────────────────────────
+import { useRef } from "react";
 import {
   X, Package, AlertTriangle, CheckCircle, ArrowUpCircle, Calendar,
   Loader2, Truck, History,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { formatMoney } from "../../utils/currency";
+import { useDropdownPlacement } from "../../hooks/useDropdownPlacement";
 
 export default function SupplierPurchaseTab({
   suppliers, warehouseLocations, stockByProduct,
@@ -19,6 +21,8 @@ export default function SupplierPurchaseTab({
 }) {
   const { companyCurrency } = useAuth();
   const currencySymbol = companyCurrency.currencySymbol;
+  const productAnchorRef = useRef(null);
+  const productDropdown = useDropdownPlacement(productAnchorRef, pFiltered.length > 0 && !pForm.product);
   // Comprar "Por Empaque" o "Por Kg" (Almacén) son ambos destino ALMACÉN —
   // difieren en la unidad de compra: cajas/packs enteros vs. Kilogramos con
   // decimales (ver ProductosTab.jsx / 0021_unit_type_peso, y
@@ -76,7 +80,7 @@ export default function SupplierPurchaseTab({
               <label className="text-xs text-slate-400 uppercase tracking-wider mb-1.5 block">
                 Producto de {pForm.buyMode === "unidad" ? "Inventario" : "Almacén"} *
               </label>
-              <div className="relative">
+              <div className="relative" ref={productAnchorRef}>
                 <input value={pForm.productSearch} onChange={e => setPForm(p => ({ ...p, productSearch: e.target.value, product: null }))} placeholder="Buscar…"
                   className="w-full px-3 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors" />
                 {pForm.product && (
@@ -103,7 +107,10 @@ export default function SupplierPurchaseTab({
                   </p>
                 )}
                 {pFiltered.length > 0 && !pForm.product && (
-                  <div className="absolute z-20 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                  <div
+                    className={`absolute z-20 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-y-auto ${productDropdown.openUp ? "bottom-full mb-1" : "mt-1"}`}
+                    style={{ maxHeight: productDropdown.maxHeight }}
+                  >
                     {pFiltered.slice(0, 5).map(p => {
                       const rawStock = pForm.buyMode === "unidad" ? p.stock : (stockByProduct[p.id] || []).reduce((s, i) => s + (i.qty || 0), 0);
                       // Redondeo a 3 decimales solo para mostrar — evita
