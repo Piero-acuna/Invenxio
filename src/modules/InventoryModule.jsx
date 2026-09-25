@@ -173,6 +173,13 @@ const InventoryModule = ({
     // packaging.js), para no romper el resto de la app mientras no se migra
     // a leer `presentations` directamente.
     cost: "", stock: "", minStock: "4",
+    // stockByPresentation: cuánto stock inicial hay, EN CADA presentación
+    // (ej. "5" en Caja + "3" en Pack + "10" sueltas en Unidad), en vez de un
+    // solo campo — clave = presentations[].id, para que sobreviva aunque se
+    // reordenen/agreguen/quiten filas. El total en unidades base (lo único
+    // que el resto del sistema necesita) se calcula sumando
+    // qty × multiplier de cada fila (ver handleAddProduct).
+    stockByPresentation: {},
     // Lotes de caducidad — 0, 1 o varios, ninguno obligatorio (ver
     // 0023_product_expiry_lots.sql / ExpiryLotsEditor.jsx). Compartido
     // entre Inventario y Almacén por el mismo motivo que name/sku/
@@ -472,6 +479,13 @@ const InventoryModule = ({
       description: p.description || "",
       cost: p.cost ?? "",
       stock: p.stock ?? "",
+      // stockByPresentation: igual que en "Nuevo Producto" — un campo por
+      // presentación (ej. "3 Cajas" + "2 Packs") en vez de un solo número.
+      // Arranca vacío SIEMPRE (no se puede reconstruir de qué presentación
+      // viene el stock actual, solo se conoce el total en unidades base) —
+      // si el Dueño no toca ningún campo, el stock queda igual que estaba
+      // (ver handleEditSave); si llena alguno, la suma reemplaza al total.
+      stockByPresentation: {},
       minStock: p.minStock ?? 4,
       unitType: p.unitType || "unidad",
       presentations: toEditablePresentations(p),
@@ -603,7 +617,12 @@ const InventoryModule = ({
     try {
       const { price, barcode, packQty: derivedPackQty } = deriveLegacyFieldsFromPresentations(newProd.presentations);
       const packQty  = derivedPackQty || 0;
-      const stock    = packQty > 0 ? (Number(newProd.stock) || 0) * packQty : (Number(newProd.stock) || 0);
+      // Stock inicial total en unidades base = suma de (cantidad ingresada ×
+      // multiplicador) de CADA presentación con stock — ya no un solo campo
+      // atado al primer "Pack" (ver el bloque "Stock" del JSX de arriba).
+      const stock = newProd.presentations
+        .filter(p => Number(p.multiplier) > 0)
+        .reduce((sum, p) => sum + (Number(newProd.stockByPresentation[p.id]) || 0) * Number(p.multiplier), 0);
       const minStock = Number(newProd.minStock) || 0;
       const cost     = Number(newProd.cost) || 0;
       const sku = newProd.sku;
@@ -661,7 +680,7 @@ const InventoryModule = ({
       }
 
       setShowNewProd(false);
-      setNewProd(p => ({ ...p, name: "", sku: nextSku, description: "", cost: "", stock: "", minStock: "4", unitType: "unidad", presentations: buildDefaultPresentations(), expiryLots: [] }));
+      setNewProd(p => ({ ...p, name: "", sku: nextSku, description: "", cost: "", stock: "", stockByPresentation: {}, minStock: "4", unitType: "unidad", presentations: buildDefaultPresentations(), expiryLots: [] }));
     } catch (err) {
       setSaveError(logAndGetErrorMessage(err, "Error al crear producto:"));
     }
@@ -681,7 +700,18 @@ const InventoryModule = ({
       // 750 gramos silenciosamente cada vez que se editaba. parseFloat()
       // respeta los decimales tanto para productos por Unidad (donde da
       // igual, ya que ahí siempre se ingresan enteros) como por Peso.
-      const stock = parseFloat(editForm.stock);
+      //
+      // stock — igual que en "Nuevo Producto": se arma sumando (cantidad ×
+      // multiplicador) de cada presentación con un campo lleno en
+      // stockByPresentation. Si el Dueño NO tocó ningún campo (todos vacíos,
+      // el caso normal — solo está editando nombre/precio/etc.), el stock
+      // se deja exactamente igual que antes, nunca se toca por accidente.
+      const stockFieldsTouched = Object.values(editForm.stockByPresentation || {}).some(v => v !== "" && v != null);
+      const stock = stockFieldsTouched
+        ? editForm.presentations
+            .filter(p => Number(p.multiplier) > 0)
+            .reduce((sum, p) => sum + (Number(editForm.stockByPresentation[p.id]) || 0) * Number(p.multiplier), 0)
+        : NaN; // NaN → "no tocar" (ver finalStock más abajo, mismo criterio que antes)
       const minStock = parseFloat(editForm.minStock);
 
       const finalStock = !isNaN(stock) ? stock : editProd.stock;
@@ -1215,31 +1245,52 @@ const InventoryModule = ({
                     );
                   })()}
 
-                  {/* Stock — siempre en la unidad mínima (multiplicador 1);
-                      si hay una presentación de empaque (ej. "Pack"), se
-                      puede seguir ingresando el stock inicial en esa unidad
-                      y se convierte a unidades automáticamente. */}
+                  {/* Stock — un campo POR CADA presentación de venta (Unidad
+                      + cada Pack/Caja agregada), porque en la práctica el
+                      stock inicial casi nunca llega en una sola presentación
+                      (ej. 5 cajas cerradas + 3 packs sueltos + 10 unidades
+                      sueltas). Cada fila se convierte a la unidad base con su
+                      propio multiplicador y se SUMAN todas — esa suma es el
+                      único número que el resto del sistema necesita (ver
+                      totalBaseStock más abajo y handleAddProduct). */}
                   {(() => {
-                    const packRows = newProd.presentations
-                      .filter(p => !p.isBase && Number(p.multiplier) > 0)
+                    const stockRows = newProd.presentations
+                      .filter(p => Number(p.multiplier) > 0)
                       .sort((a, b) => Number(a.multiplier) - Number(b.multiplier));
-                    const packForStock = packRows[0] || null;
-                    const packQtyForStock = packForStock ? Number(packForStock.multiplier) : 0;
+                    const unitLabel = newProd.unitType === "peso" ? "kg" : "unidades";
+                    const totalBaseStock = stockRows.reduce(
+                      (sum, p) => sum + (Number(newProd.stockByPresentation[p.id]) || 0) * Number(p.multiplier),
+                      0
+                    );
                     return (
                       <div>
                         <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
-                        {packQtyForStock > 0 && (
-                          <p className="text-[11px] text-amber-400/80 mb-2">📦 Ingresa el stock inicial en cantidad de "{packForStock.name || "Pack"}" ({packQtyForStock} {newProd.unitType === "peso" ? "kg" : "und"} c/u); se convierte {newProd.unitType === "peso" ? "a Kg" : "a unidades"} automáticamente.</p>
+                        {stockRows.length > 1 && (
+                          <p className="text-[11px] text-amber-400/80 mb-2">📦 Ingresa cuánto tienes de cada presentación — se suman y convierten {newProd.unitType === "peso" ? "a Kg" : "a unidades"} automáticamente.</p>
                         )}
                         <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-xs text-slate-400 mb-1 block">{packQtyForStock > 0 ? `Stock inicial (${packForStock.name || "Pack"})` : newProd.unitType === "peso" ? "Stock inicial (kg)" : "Stock inicial (unidades)"}</label>
-                            <input type="number" min="0" step={newProd.unitType === "peso" ? "0.001" : "1"} value={newProd.stock} onChange={e => setNewProd(p => ({ ...p, stock: e.target.value }))} placeholder="0"
-                              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                            {packQtyForStock > 0 && Number(newProd.stock) > 0 && (
-                              <p className="text-[10px] text-slate-500 mt-1">= {Number(newProd.stock) * packQtyForStock} {newProd.unitType === "peso" ? "kg" : "unidades"}</p>
-                            )}
-                          </div>
+                          {stockRows.map(p => (
+                            <div key={p.id}>
+                              <label className="text-xs text-slate-400 mb-1 block">
+                                {p.isBase ? (newProd.unitType === "peso" ? "Stock inicial (kg)" : "Stock inicial (unidades)") : `Stock inicial (${p.name || "Pack"})`}
+                              </label>
+                              {!p.isBase && (
+                                <p className="text-[10px] text-slate-500 mb-1">{Number(p.multiplier)} {unitLabel} c/u</p>
+                              )}
+                              <input
+                                type="number" min="0" step={newProd.unitType === "peso" ? "0.001" : "1"}
+                                value={newProd.stockByPresentation[p.id] ?? ""}
+                                onChange={e => setNewProd(prod => ({
+                                  ...prod,
+                                  stockByPresentation: { ...prod.stockByPresentation, [p.id]: e.target.value },
+                                }))}
+                                placeholder="0"
+                                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                              {!p.isBase && Number(newProd.stockByPresentation[p.id]) > 0 && (
+                                <p className="text-[10px] text-slate-500 mt-1">= {Number(newProd.stockByPresentation[p.id]) * Number(p.multiplier)} {unitLabel}</p>
+                              )}
+                            </div>
+                          ))}
                           <div>
                             <label className="text-xs text-slate-400 mb-1 block">Stock mínimo{newProd.unitType === "peso" ? " (kg)" : ""}</label>
                             <p className="text-[10px] text-slate-500 mb-1">Alerta cuando baje de aquí</p>
@@ -1247,6 +1298,9 @@ const InventoryModule = ({
                               className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
                           </div>
                         </div>
+                        {stockRows.length > 1 && totalBaseStock > 0 && (
+                          <p className="text-[11px] text-slate-500 mt-2">Total: <span className="text-slate-300 font-mono">{totalBaseStock}</span> {unitLabel}</p>
+                        )}
                       </div>
                     );
                   })()}
@@ -1533,23 +1587,68 @@ const InventoryModule = ({
                 );
               })()}
 
-              {/* Stock */}
-              <div>
-                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
-                <div className="grid grid-cols-2 gap-3">
+              {/* Stock — igual que en "Nuevo Producto": un campo por cada
+                  presentación (ej. "Cajas" + "Packs" + "Unidades sueltas")
+                  en vez de un solo número. No se puede repartir el stock
+                  ACTUAL en presentaciones (solo se guarda el total en
+                  unidades base), así que estos campos arrancan vacíos y
+                  representan "cuánto quiero AGREGAR/AJUSTAR expresado en
+                  cada presentación" — si se deja todo vacío, el stock no se
+                  toca (ver stockFieldsTouched en handleEditSave); si se
+                  llena alguno, la suma reemplaza el total actual. */}
+              {(() => {
+                const stockRows = (editForm.presentations || [])
+                  .filter(p => Number(p.multiplier) > 0)
+                  .sort((a, b) => Number(a.multiplier) - Number(b.multiplier));
+                const unitLabel = editForm.unitType === "peso" ? "kg" : "unidades";
+                const anyTouched = Object.values(editForm.stockByPresentation || {}).some(v => v !== "" && v != null);
+                const newTotal = stockRows.reduce(
+                  (sum, p) => sum + (Number((editForm.stockByPresentation || {})[p.id]) || 0) * Number(p.multiplier),
+                  0
+                );
+                return (
                   <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Stock actual ({editForm.unitType === "peso" ? "kg" : "unidades"})</label>
-                    <input type="number" min="0" step={editForm.unitType === "peso" ? "0.001" : "1"} value={editForm.stock} onChange={e => setEditForm(p => ({ ...p, stock: e.target.value }))}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Stock</p>
+                    <p className="text-[11px] text-slate-500 mb-2">
+                      Stock actual: <span className="text-slate-300 font-mono">{editProd?.stock ?? 0}</span> {unitLabel}
+                      {stockRows.length > 1 ? " — ingresa el nuevo total repartido por presentación (deja todo vacío para no tocarlo)." : " — deja el campo vacío para no tocarlo."}
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {stockRows.map(p => (
+                        <div key={p.id}>
+                          <label className="text-xs text-slate-400 mb-1 block">
+                            {p.isBase ? `Stock nuevo (${unitLabel})` : `Stock nuevo (${p.name || "Pack"})`}
+                          </label>
+                          {!p.isBase && (
+                            <p className="text-[10px] text-slate-500 mb-1">{Number(p.multiplier)} {unitLabel} c/u</p>
+                          )}
+                          <input
+                            type="number" min="0" step={editForm.unitType === "peso" ? "0.001" : "1"}
+                            value={(editForm.stockByPresentation || {})[p.id] ?? ""}
+                            onChange={e => setEditForm(prod => ({
+                              ...prod,
+                              stockByPresentation: { ...(prod.stockByPresentation || {}), [p.id]: e.target.value },
+                            }))}
+                            placeholder="—"
+                            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                          {!p.isBase && Number((editForm.stockByPresentation || {})[p.id]) > 0 && (
+                            <p className="text-[10px] text-slate-500 mt-1">= {Number((editForm.stockByPresentation || {})[p.id]) * Number(p.multiplier)} {unitLabel}</p>
+                          )}
+                        </div>
+                      ))}
+                      <div>
+                        <label className="text-xs text-slate-400 mb-1 block">Stock mínimo{editForm.unitType === "peso" ? " (kg)" : ""}</label>
+                        <p className="text-[10px] text-slate-500 mb-1">Alerta cuando baje de aquí</p>
+                        <input type="number" min="0" step={editForm.unitType === "peso" ? "0.001" : "1"} value={editForm.minStock} onChange={e => setEditForm(p => ({ ...p, minStock: e.target.value }))}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
+                      </div>
+                    </div>
+                    {anyTouched && (
+                      <p className="text-[11px] text-amber-400/80 mt-2">📦 Nuevo total: <span className="font-mono">{newTotal}</span> {unitLabel} (antes: {editProd?.stock ?? 0})</p>
+                    )}
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Stock mínimo{editForm.unitType === "peso" ? " (kg)" : ""}</label>
-                    <p className="text-[10px] text-slate-500 mb-1">Alerta cuando baje de aquí</p>
-                    <input type="number" min="0" step={editForm.unitType === "peso" ? "0.001" : "1"} value={editForm.minStock} onChange={e => setEditForm(p => ({ ...p, minStock: e.target.value }))}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-amber-500 transition-colors" />
-                  </div>
-                </div>
-              </div>
+                );
+              })()}
 
               <ExpiryLotsEditor
                 lots={editForm.expiryLots || []}
